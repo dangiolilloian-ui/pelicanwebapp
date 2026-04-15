@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.env
+*.log
+pgdata/
+# Database dumps can contain real employee PII — never commit.
+backup/data/
+*.sql.gz
+*.dump

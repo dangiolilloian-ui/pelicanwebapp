@@ -1,0 +1,647 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  timezone  String   @default("America/New_York")
+  // Points-based attendance policy: { windowDays, lateMinutes, pointsNoShow,
+  // pointsLate, pointsEarlyOut, thresholdWarn, thresholdFinal }. Nullable so
+  // untouched orgs fall back to server defaults in src/lib/attendancePoints.js.
+  attendanceConfig Json? @map("attendance_config")
+  // PTO accrual policy: { accrualRatePerHour, annualCapHours, enabled }.
+  // Defaults in src/lib/pto.js target NJ Earned Sick Leave (1h per 30 worked,
+  // 40h cap). Nullable so the feature is opt-out per org.
+  ptoConfig        Json? @map("pto_config")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users     User[]
+  positions Position[]
+  locations Location[]
+  shifts    Shift[]
+  shiftTemplates ShiftTemplate[]
+  recurringShifts RecurringShift[]
+  announcements  Announcement[]
+  incidents      Incident[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  passwordHash   String   @map("password_hash")
+  firstName      String   @map("first_name")
+  lastName       String   @map("last_name")
+  phone          String?
+  role           Role     @default(EMPLOYEE)
+  organizationId String   @map("organization_id")
+  pin            String?  // 4-digit kiosk PIN, unique within org
+  weeklyHoursCap Int?     @map("weekly_hours_cap") // null = no cap
+  birthDate      DateTime? @map("birth_date") @db.Date // used for minor labor compliance
+  // TOTP 2FA: secret is stored base32-encoded and is meaningless until
+  // totpEnabled flips true (first successful verify). A user can be in a
+  // "set up but not confirmed" state where totpSecret is non-null but
+  // totpEnabled is false — that's deliberate so a half-finished setup
+  // doesn't lock anyone out.
+  totpSecret     String?  @map("totp_secret")
+  totpEnabled    Boolean  @default(false) @map("totp_enabled")
+  icalToken      String?  @unique @map("ical_token")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  shifts       Shift[]
+  availabilities Availability[]
+  timeOffRequests TimeOffRequest[]
+  messages     Message[]
+  notifications Notification[]
+  timeEntries  TimeEntry[]
+  shiftSwapsRequested ShiftSwap[] @relation("SwapRequester")
+  shiftSwapsTargeted  ShiftSwap[] @relation("SwapTarget")
+  shiftClaims  ShiftClaim[]
+  certifications Certification[]
+  pushSubscriptions PushSubscription[]
+  announcementAcks AnnouncementAck[]
+  // The positions an employee is trained for and the locations they work at.
+  // Used by the scheduling view to filter employee rows by job position /
+  // location — independently of what shifts they happen to be on this week.
+  positions    Position[]         @relation("UserPositions")
+  locations    Location[]         @relation("UserLocations")
+
+  @@unique([organizationId, pin])
+  @@map("users")
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  EMPLOYEE
+}
+
+model Position {
+  id             String   @id @default(uuid())
+  name           String
+  color          String   @default("#6366f1")
+  hourlyRate     Float    @default(15) @map("hourly_rate")
+  organizationId String   @map("organization_id")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  shifts       Shift[]
+  shiftTemplates ShiftTemplate[]
+  assignedUsers User[] @relation("UserPositions")
+
+  @@map("positions")
+}
+
+model Location {
+  id             String   @id @default(uuid())
+  name           String
+  address        String?
+  latitude       Float?
+  longitude      Float?
+  radiusMeters   Int      @default(150) @map("radius_meters")
+  weeklyBudget   Float?   @map("weekly_budget")
+  organizationId String   @map("organization_id")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  shifts       Shift[]
+  shiftTemplates ShiftTemplate[]
+  assignedUsers User[] @relation("UserLocations")
+
+  @@map("locations")
+}
+
+model Shift {
+  id             String      @id @default(uuid())
+  startTime      DateTime    @map("start_time")
+  endTime        DateTime    @map("end_time")
+  notes          String?
+  status         ShiftStatus @default(DRAFT)
+  organizationId String      @map("organization_id")
+  userId         String?     @map("user_id")
+  positionId     String?     @map("position_id")
+  locationId     String?     @map("location_id")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  confirmedAt        DateTime? @map("confirmed_at")
+  reminderSentAt     DateTime? @map("reminder_sent_at")
+  unconfirmedNudgedAt DateTime? @map("unconfirmed_nudged_at")
+  handoffNote        String?   @map("handoff_note")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User?        @relation(fields: [userId], references: [id])
+  position     Position?    @relation(fields: [positionId], references: [id])
+  location     Location?    @relation(fields: [locationId], references: [id])
+  swaps        ShiftSwap[]
+  claims       ShiftClaim[]
+
+  @@map("shifts")
+}
+
+enum ShiftStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Availability {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  dayOfWeek Int      @map("day_of_week") // 0=Sunday, 6=Saturday
+  startTime String   @map("start_time") // "HH:mm"
+  endTime   String   @map("end_time")   // "HH:mm"
+  available Boolean  @default(true)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("availabilities")
+}
+
+model TimeOffRequest {
+  id        String          @id @default(uuid())
+  userId    String          @map("user_id")
+  startDate DateTime        @map("start_date")
+  endDate   DateTime        @map("end_date")
+  // Hours the employee is requesting against their PTO balance. Optional so
+  // pre-PTO-era requests still read; new requests prompt for an explicit
+  // hours figure (e.g. 16h for two 8h days).
+  hours     Float?
+  reason    String?
+  status    RequestStatus   @default(PENDING)
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("time_off_requests")
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+// Broadcast from a manager to the whole org. `pinned=true` keeps it docked
+// at the top of the employee dashboard until it expires or is unpinned.
+// `expiresAt` lets time-sensitive ones ("train arrives tomorrow 7am") fall
+// off automatically.
+model Announcement {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  authorId       String    @map("author_id")
+  title          String
+  body           String
+  pinned         Boolean   @default(true)
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  acks         AnnouncementAck[]
+
+  @@index([organizationId, pinned])
+  @@map("announcements")
+}
+
+// One row per (announcement, user) once the user taps "Got it". Enables
+// managers to see read-through rates on compliance-style announcements
+// without polluting the notifications table.
+model AnnouncementAck {
+  id             String   @id @default(uuid())
+  announcementId String   @map("announcement_id")
+  userId         String   @map("user_id")
+  ackedAt        DateTime @default(now()) @map("acked_at")
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([announcementId])
+  @@map("announcement_acks")
+}
+
+// A rule like "Agustin always works Mondays 9-17 at Flemington, starting
+// 2026-01-01, no end date". Materialized into Shift rows by the planner.
+model RecurringShift {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  userId         String?   @map("user_id")
+  positionId     String?   @map("position_id")
+  locationId     String?   @map("location_id")
+  dayOfWeek      Int       @map("day_of_week") // 0=Sun..6=Sat
+  startTime      String    @map("start_time")  // "HH:mm"
+  endTime        String    @map("end_time")    // "HH:mm"
+  validFrom      DateTime  @map("valid_from")
+  validUntil     DateTime? @map("valid_until")
+  notes          String?
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, active])
+  @@map("recurring_shifts")
+}
+
+model ShiftTemplate {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  startTime      String   @map("start_time") // "HH:mm"
+  endTime        String   @map("end_time")   // "HH:mm"
+  positionId     String?  @map("position_id")
+  locationId     String?  @map("location_id")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  position     Position?    @relation(fields: [positionId], references: [id])
+  location     Location?    @relation(fields: [locationId], references: [id])
+
+  @@map("shift_templates")
+}
+
+model ShiftSwap {
+  id            String     @id @default(uuid())
+  shiftId       String     @map("shift_id")
+  requesterId   String     @map("requester_id")
+  targetUserId  String?    @map("target_user_id")
+  status        SwapStatus @default(PENDING)
+  message       String?
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  shift     Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  requester User  @relation("SwapRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  target    User? @relation("SwapTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@map("shift_swaps")
+}
+
+enum SwapStatus {
+  PENDING
+  ACCEPTED
+  APPROVED
+  DENIED
+  CANCELLED
+}
+
+model TimeEntry {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  shiftId           String?   @map("shift_id")
+  clockIn           DateTime  @map("clock_in")
+  clockOut          DateTime? @map("clock_out")
+  breakStartedAt    DateTime? @map("break_started_at") // non-null while on break
+  totalBreakMinutes Int       @default(0) @map("total_break_minutes")
+  // Dedup flag set by the break-reminder job so a long uninterrupted shift
+  // only triggers one push. Cleared implicitly by the row being closed.
+  breakReminderAt   DateTime? @map("break_reminder_at")
+  // Same pattern for the clock-out nudge — only send one reminder per shift
+  // when someone stays punched in past their scheduled end time.
+  clockOutReminderAt DateTime? @map("clockout_reminder_at")
+  notes             String?
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, clockIn])
+  @@map("time_entries")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String   // SHIFT_PUBLISHED, TIMEOFF_APPROVED, TIMEOFF_DENIED, TIMEOFF_REQUESTED, MESSAGE
+  title     String
+  body      String?
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  endpoint  String   @unique @db.Text
+  p256dh    String   @db.Text
+  auth      String   @db.Text
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+model ShiftClaim {
+  id         String      @id @default(uuid())
+  shiftId    String      @map("shift_id")
+  userId     String      @map("user_id")
+  status     ClaimStatus @default(PENDING)
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, userId])
+  @@map("shift_claims")
+}
+
+enum ClaimStatus {
+  PENDING
+  APPROVED
+  DENIED
+  CANCELLED
+}
+
+// Employee credentials with optional expiry — food handler, alcohol server,
+// first aid, CPR. Surfaced on the dashboard when they're within 30 days of
+// expiring so a manager can chase before someone goes un-credentialed.
+model Certification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  name      String
+  issuedAt  DateTime? @map("issued_at")
+  expiresAt DateTime? @map("expires_at")
+  reference String?   // license/card number
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("certifications")
+}
+
+// A reusable list of shift-floor tasks (open, close, stock counts, cleanup).
+// Attach to a specific location or leave locationId null to apply org-wide.
+// Items are tracked per-shift — completions live on ChecklistCompletion and
+// reset every new shift, so the same template is reused day after day.
+model ChecklistTemplate {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  locationId     String?  @map("location_id") // null = applies to every shift in the org
+  name           String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  items ChecklistItem[]
+
+  @@index([organizationId, locationId])
+  @@map("checklist_templates")
+}
+
+model ChecklistItem {
+  id         String @id @default(uuid())
+  templateId String @map("template_id")
+  label      String
+  position   Int    @default(0)
+
+  template    ChecklistTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  completions ChecklistCompletion[]
+
+  @@index([templateId, position])
+  @@map("checklist_items")
+}
+
+// One row per (item, shift). Presence = done, absence = to-do. Unique keeps
+// us from double-counting if two employees tap the same task at once.
+model ChecklistCompletion {
+  id          String   @id @default(uuid())
+  itemId      String   @map("item_id")
+  shiftId     String   @map("shift_id")
+  userId      String   @map("user_id")
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  item ChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, shiftId])
+  @@index([shiftId])
+  @@map("checklist_completions")
+}
+
+// Manager-only notes pinned to an employee. Training plans, write-ups,
+// "remember to ask about availability next month", etc. Not visible to the
+// employee themselves — they're a manager's notebook, not HR records.
+model EmployeeNote {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  authorId  String   @map("author_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("employee_notes")
+}
+
+// Manager-issued invite or reset link. The token is random + single-use.
+// Used for both new-hire onboarding ("here's your link, set a password") and
+// for resetting a forgotten password on behalf of an employee. No SMTP yet,
+// so the token is rendered in the team page for the manager to copy-paste.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// Append-only audit trail for manager actions that change org state —
+// shift assignments, user role changes, time-off decisions, deletions.
+// Kept separate from Notification (which is employee-facing) because this is
+// a who/what/when record for managers to reconstruct "why did this happen".
+// entityType + entityId lets us filter by a specific shift/user without
+// needing a FK per entity type.
+model AuditLog {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  actorId        String?  @map("actor_id") // null if actor was later deleted
+  action         String   // e.g. SHIFT_ASSIGN, USER_ROLE_CHANGE, TIMEOFF_APPROVE
+  entityType     String   @map("entity_type") // SHIFT, USER, TIMEOFF, ...
+  entityId       String?  @map("entity_id")
+  summary        String   // short human-readable line
+  metadata       Json?    // before/after or extra context
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@map("audit_logs")
+}
+
+// Append-only PTO ledger. Balance = SUM(delta) for a user. Every movement
+// (accrual from worked hours, consumption from an approved time-off request,
+// manual adjustment by a manager) is a new row — nothing is ever updated.
+// `refType`/`refId` lets us point back to a shift/timeoff/adjustment without
+// a hard FK, so rolling a source record off doesn't corrupt history.
+model PtoLedgerEntry {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  userId         String   @map("user_id")
+  delta          Float    // hours (+ accrual, - consumption)
+  kind           String   // ACCRUAL, CONSUME, ADJUST, GRANT
+  reason         String?
+  refType        String?  @map("ref_type") // SHIFT, TIMEOFF, ADJUSTMENT
+  refId          String?  @map("ref_id")
+  actorId        String?  @map("actor_id") // null for automated accrual
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, userId, createdAt])
+  @@index([userId, kind])
+  @@map("pto_ledger")
+}
+
+// Minimum staffing requirement for a location+weekday+window. Used by the
+// schedule publish flow to warn managers about uncovered slots before a
+// published week goes live. Multiple rows can overlap — the worst shortfall
+// at any given minute wins. Leave `locationId` null to set an org-wide rule.
+model CoverageRequirement {
+  id             String  @id @default(uuid())
+  organizationId String  @map("organization_id")
+  locationId     String? @map("location_id")
+  dayOfWeek      Int     @map("day_of_week") // 0=Sun..6=Sat
+  startTime      String  @map("start_time")  // "HH:mm"
+  endTime        String  @map("end_time")    // "HH:mm"
+  minStaff       Int     @map("min_staff")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, dayOfWeek])
+  @@map("coverage_requirements")
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  channel   String   @default("general")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("messages")
+}
+
+// Per-org onboarding template. A list of tasks a new hire needs to clear
+// — W-4, I-9, uniform, POS training, etc. Ordered via `sortOrder` so the
+// UI renders them in a stable sequence.
+model OnboardingTask {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  title          String
+  description    String?
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, sortOrder])
+  @@map("onboarding_tasks")
+}
+
+// Per-user instance of an onboarding task. Created in bulk when a new user
+// is registered (one row per OnboardingTask in that user's org) so managers
+// have a concrete "still needs to clear X" list, not an abstract template.
+// `taskId` is intentionally just a string instead of a relation so deleting
+// a template later doesn't cascade and nuke historical completion records.
+model OnboardingProgress {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  taskId         String    @map("task_id")
+  title          String    // denormalized snapshot at creation time
+  completedAt    DateTime? @map("completed_at")
+  completedById  String?   @map("completed_by_id")
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([userId, taskId])
+  @@index([userId])
+  @@map("onboarding_progress")
+}
+
+// Daily sales totals per location. Managers enter the day's revenue at close
+// so the reports page can compute labor % (labor cost / sales). We store one
+// row per (location, date) — if the same day is re-entered we just update
+// the existing row instead of creating a duplicate.
+model DailySales {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  locationId     String   @map("location_id")
+  date           DateTime @db.Date
+  amount         Float
+  notes          String?
+  enteredById    String?  @map("entered_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([locationId, date])
+  @@index([organizationId, date])
+  @@map("daily_sales")
+}
+
+// Org-defined paid holidays. `multiplier` is applied to the hourly rate for
+// any time worked on that calendar date — e.g. 1.5 for time-and-a-half on
+// Thanksgiving. Date is stored as a plain date (no TZ) so a holiday is
+// "the whole day in the org's timezone" regardless of DST quirks.
+model Holiday {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  date           DateTime @db.Date
+  name           String
+  multiplier     Float    @default(1.5)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, date])
+  @@index([organizationId, date])
+  @@map("holidays")
+}
+
+// Workplace incident / accident log. Employees file a report for anything
+// from a customer complaint to a slip-and-fall. Managers get a push and
+// can mark it resolved with a note.
+model Incident {
+  id             String           @id @default(uuid())
+  organizationId String           @map("organization_id")
+  reporterId     String           @map("reporter_id")
+  locationId     String?          @map("location_id")
+  severity       IncidentSeverity @default(LOW)
+  title          String
+  description    String
+  occurredAt     DateTime         @map("occurred_at")
+  status         IncidentStatus   @default(OPEN)
+  resolvedAt     DateTime?        @map("resolved_at")
+  resolvedById   String?          @map("resolved_by_id")
+  resolutionNote String?          @map("resolution_note")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@map("incidents")
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  OPEN
+  RESOLVED
+}
