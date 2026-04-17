@@ -8,7 +8,6 @@ export interface Holiday {
   id: string;
   date: string;
   name: string;
-  multiplier: number;
 }
 
 export function useHolidays(year?: number) {

@@ -9,11 +9,10 @@ interface Holiday {
   id: string;
   date: string;
   name: string;
-  multiplier: number;
 }
 
-// Pay extra on paid holidays. Managers add entries here; payroll export reads
-// them to apply the premium to any hours worked on that date.
+// Holidays block scheduling on these dates. Managers add entries here;
+// the schedule view and backend enforce the block.
 export function HolidaysSection() {
   const t = useT();
   const { token, user } = useAuth();
@@ -27,7 +26,6 @@ export function HolidaysSection() {
 
   const [date, setDate] = useState('');
   const [name, setName] = useState('');
-  const [multiplier, setMultiplier] = useState('1.5');
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -54,11 +52,10 @@ export function HolidaysSection() {
       await api('/holidays', {
         token,
         method: 'POST',
-        body: JSON.stringify({ date, name: name.trim(), multiplier: Number(multiplier) }),
+        body: JSON.stringify({ date, name: name.trim() }),
       });
       setDate('');
       setName('');
-      setMultiplier('1.5');
       await load();
     } catch (e: any) {
       setError(e.message || t('holidays.saveFailed'));
@@ -79,8 +76,6 @@ export function HolidaysSection() {
   };
 
   const formatDate = (iso: string) => {
-    // Date-only strings come back as "YYYY-MM-DDT00:00:00.000Z" — slice to
-    // avoid timezone shifts flipping Dec 25 → Dec 24 in the browser.
     const d = new Date(iso.slice(0, 10) + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   };
@@ -102,7 +97,7 @@ export function HolidaysSection() {
         </select>
       </div>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-        {t('holidays.desc')}
+        Scheduling is blocked on these dates. No one can be assigned a shift on a holiday.
       </p>
 
       {error && (
@@ -124,7 +119,7 @@ export function HolidaysSection() {
               <div>
                 <div className="text-sm text-gray-900 dark:text-gray-100">{h.name}</div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {formatDate(h.date)} · {t('holidays.multiplier', { n: h.multiplier })}
+                  {formatDate(h.date)}
                 </div>
               </div>
               {isManager && (
@@ -160,18 +155,6 @@ export function HolidaysSection() {
               onChange={(e) => setName(e.target.value)}
               placeholder={t('holidays.namePlaceholder')}
               required
-              className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div className="w-24">
-            <label className="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-1">{t('holidays.multiplierLabel')}</label>
-            <input
-              type="number"
-              step="0.25"
-              min="1"
-              max="10"
-              value={multiplier}
-              onChange={(e) => setMultiplier(e.target.value)}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 text-sm"
             />
           </div>

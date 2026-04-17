@@ -271,9 +271,9 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
     orderBy: { clockIn: 'asc' },
   });
 
-  // Preload holidays that fall inside the payroll range so we can stamp any
-  // hours worked on those days with the configured multiplier. Keyed by the
-  // date's ISO "YYYY-MM-DD" slice for a cheap lookup per entry.
+  // Preload holidays that fall inside the payroll range so we can flag any
+  // hours worked on those days. Keyed by the date's ISO "YYYY-MM-DD" slice
+  // for a cheap lookup per entry.
   const holidayRows = await prisma.holiday.findMany({
     where: {
       organizationId: req.user.organizationId,
@@ -304,13 +304,7 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
     return x.toISOString().slice(0, 10);
   };
 
-  // { `${userId}|${week}`: { user, week, hours, weightedCost, holidayHours, holidayPremium } }
-  //
-  // Holiday handling: if the clock-in falls on a configured holiday, we
-  // count the hours into a separate `holidayHours` bucket and accumulate a
-  // `holidayPremium` (extra pay above the normal rate) using
-  // `rate * hours * (multiplier - 1)`. The base pay still flows through the
-  // regular/OT split below — the premium is added on top in the final row.
+  // { `${userId}|${week}`: { user, week, hours, weightedCost, holidayHours } }
   const buckets = new Map();
   for (const e of entries) {
     const durationMs =
@@ -332,7 +326,6 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
       weightedCost: 0,
       ratedHours: 0,
       holidayHours: 0,
-      holidayPremium: 0,
     };
     bucket.hours += hours;
     if (rate > 0) {
@@ -341,9 +334,6 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
     }
     if (holiday) {
       bucket.holidayHours += hours;
-      if (rate > 0 && holiday.multiplier > 1) {
-        bucket.holidayPremium += hours * rate * (holiday.multiplier - 1);
-      }
     }
     buckets.set(key, bucket);
   }
@@ -362,7 +352,6 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
     'OT Hours',
     'Total Hours',
     'Holiday Hours',
-    'Holiday Premium',
     'Avg Hourly Rate',
     'Est Gross Pay',
   ];
@@ -374,11 +363,7 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
       const regular = Math.min(total, 40);
       const ot = Math.max(0, total - 40);
       const avgRate = b.ratedHours > 0 ? b.weightedCost / b.ratedHours : 0;
-      // Classic 1.5x overtime; falls back to 0 when we don't have a rate.
-      // Holiday premium is paid *on top* of the base + OT split — the
-      // underlying hours are already counted in regular/OT above.
-      const base = avgRate > 0 ? regular * avgRate + ot * avgRate * 1.5 : 0;
-      const estGross = base + b.holidayPremium;
+      const estGross = avgRate > 0 ? regular * avgRate + ot * avgRate * 1.5 : 0;
       return [
         b.userId,
         b.userName,
@@ -387,7 +372,6 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), a
         round2(ot).toFixed(2),
         round2(total).toFixed(2),
         round2(b.holidayHours).toFixed(2),
-        b.holidayPremium > 0 ? round2(b.holidayPremium).toFixed(2) : '',
         avgRate > 0 ? round2(avgRate).toFixed(2) : '',
         estGross > 0 ? round2(estGross).toFixed(2) : '',
       ];

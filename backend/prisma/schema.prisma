@@ -674,16 +674,14 @@ model DailySales {
   @@map("daily_sales")
 }
 
-// Org-defined paid holidays. `multiplier` is applied to the hourly rate for
-// any time worked on that calendar date — e.g. 1.5 for time-and-a-half on
-// Thanksgiving. Date is stored as a plain date (no TZ) so a holiday is
-// "the whole day in the org's timezone" regardless of DST quirks.
+// Org-defined holidays. Scheduling is fully blocked on these dates.
+// Date is stored as a plain date (no TZ) so a holiday is "the whole day
+// in the org's timezone" regardless of DST quirks.
 model Holiday {
   id             String   @id @default(uuid())
   organizationId String   @map("organization_id")
   date           DateTime @db.Date
   name           String
-  multiplier     Float    @default(1.5)
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@unique([organizationId, date])
