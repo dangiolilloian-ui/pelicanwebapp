@@ -1,5 +1,8 @@
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
@@ -32,6 +35,7 @@ const holidayRoutes = require('./routes/holidays');
 const dailySalesRoutes = require('./routes/dailySales');
 const onboardingRoutes = require('./routes/onboarding');
 const incidentRoutes = require('./routes/incidents');
+const conversationRoutes = require('./routes/conversations');
 
 const { startShiftRemindersJob } = require('./jobs/shiftReminders');
 const { startUnconfirmedNudgeJob } = require('./jobs/unconfirmedNudge');
@@ -43,6 +47,10 @@ const { startWeeklyDigestJob } = require('./jobs/weeklyDigest');
 const { startLaborBudgetAlertJob } = require('./jobs/laborBudgetAlert');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+});
 const PORT = process.env.PORT || 4000;
 
 // We sit behind nginx-proxy-manager, so the real client IP is in the
@@ -51,6 +59,9 @@ const PORT = process.env.PORT || 4000;
 app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
+
+// Make io accessible to route handlers
+app.set('io', io);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -88,10 +99,48 @@ app.use('/api/holidays', holidayRoutes);
 app.use('/api/sales', dailySalesRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/incidents', incidentRoutes);
+app.use('/api/conversations', conversationRoutes);
 // iCal feed lives outside /api so calendar apps get a clean URL
 app.use('/ical', icalRoutes);
 
-app.listen(PORT, '0.0.0.0', () => {
+// --- Socket.IO authentication & room management ---
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Authentication required'));
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.user = decoded;
+    next();
+  } catch {
+    next(new Error('Invalid token'));
+  }
+});
+
+io.on('connection', (socket) => {
+  // Auto-join a room named after the user's ID so we can target messages
+  socket.join(`user:${socket.user.id}`);
+  // Also join an org-wide room for broadcast events
+  socket.join(`org:${socket.user.organizationId}`);
+
+  // When a client opens a conversation, join its room for real-time updates
+  socket.on('join-conversation', (conversationId) => {
+    socket.join(`conv:${conversationId}`);
+  });
+
+  socket.on('leave-conversation', (conversationId) => {
+    socket.leave(`conv:${conversationId}`);
+  });
+
+  // Typing indicator
+  socket.on('typing', ({ conversationId }) => {
+    socket.to(`conv:${conversationId}`).emit('user-typing', {
+      conversationId,
+      userId: socket.user.id,
+    });
+  });
+});
+
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Pelican API running on port ${PORT}`);
   startShiftRemindersJob();
   startUnconfirmedNudgeJob();

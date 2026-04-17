@@ -31,6 +31,7 @@ model Organization {
   recurringShifts RecurringShift[]
   announcements  Announcement[]
   incidents      Incident[]
+  conversations  Conversation[]
 
   @@map("organizations")
 }
@@ -76,6 +77,8 @@ model User {
   // location — independently of what shifts they happen to be on this week.
   positions    Position[]         @relation("UserPositions")
   locations    Location[]         @relation("UserLocations")
+  conversationMemberships ConversationMember[]
+  chatMessagesSent        ChatMessage[]
 
   @@unique([organizationId, pin])
   @@map("users")
@@ -537,6 +540,82 @@ model Message {
   user User @relation(fields: [userId], references: [id])
 
   @@map("messages")
+}
+
+// ─── Conversations (DMs, group chats, structural groups) ────────────
+// DIRECT  = 1:1 between two users
+// GROUP   = manually created group chat (manager picks users)
+// STRUCTURAL = dynamic group based on position/location filters; membership
+//   auto-syncs when employees change positions/locations.
+
+model Conversation {
+  id             String           @id @default(uuid())
+  organizationId String           @map("organization_id")
+  type           ConversationType
+  name           String?
+  createdById    String           @map("created_by_id")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      ConversationMember[]
+  chatMessages ChatMessage[]
+  filters      ConversationFilter[]
+
+  @@index([organizationId])
+  @@map("conversations")
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  STRUCTURAL
+}
+
+model ConversationMember {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  userId         String    @map("user_id")
+  lastReadAt     DateTime? @map("last_read_at")
+  joinedAt       DateTime  @default(now()) @map("joined_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_members")
+}
+
+model ChatMessage {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  senderId       String   @map("sender_id")
+  content        String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@map("chat_messages")
+}
+
+// For STRUCTURAL conversations: each row defines one filter criterion.
+// E.g. a structural group "Warehouse @ Morris Plains" would have two rows:
+//   { filterType: 'POSITION', filterId: <warehouse-position-id> }
+//   { filterType: 'LOCATION', filterId: <morris-plains-location-id> }
+// A user is a member if they match ALL filters (AND logic).
+model ConversationFilter {
+  id             String @id @default(uuid())
+  conversationId String @map("conversation_id")
+  filterType     String @map("filter_type") // POSITION or LOCATION
+  filterId       String @map("filter_id")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("conversation_filters")
 }
 
 // Per-org onboarding template. A list of tasks a new hire needs to clear

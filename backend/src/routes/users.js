@@ -228,6 +228,36 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
     await audit(req, 'USER_UPDATE', 'USER', user.id,
       `Updated user ${user.firstName} ${user.lastName}${role ? ` → ${role}` : ''}`,
       { changes: { firstName, lastName, phone, role, weeklyHoursCap, pin: pin !== undefined ? (pin ? 'set' : 'cleared') : undefined } });
+
+    // If positions or locations changed, sync structural conversation memberships
+    if (Array.isArray(positionIds) || Array.isArray(locationIds)) {
+      try {
+        const structuralConvs = await prisma.conversation.findMany({
+          where: { organizationId: req.user.organizationId, type: 'STRUCTURAL' },
+          select: { id: true },
+        });
+        for (const conv of structuralConvs) {
+          // Inline sync — compute target members and reconcile
+          const filters = await prisma.conversationFilter.findMany({ where: { conversationId: conv.id } });
+          const posFilterIds = filters.filter((f) => f.filterType === 'POSITION').map((f) => f.filterId);
+          const locFilterIds = filters.filter((f) => f.filterType === 'LOCATION').map((f) => f.filterId);
+          let w = { organizationId: req.user.organizationId };
+          if (posFilterIds.length) w.positions = { some: { id: { in: posFilterIds } } };
+          if (locFilterIds.length) w.locations = { some: { id: { in: locFilterIds } } };
+          const targetUsers = await prisma.user.findMany({ where: w, select: { id: true } });
+          const targetIds = targetUsers.map((u) => u.id);
+          const current = await prisma.conversationMember.findMany({ where: { conversationId: conv.id }, select: { userId: true, id: true } });
+          const currentIds = current.map((m) => m.userId);
+          const toAdd = targetIds.filter((id) => !currentIds.includes(id));
+          const toRemove = current.filter((m) => !targetIds.includes(m.userId));
+          if (toAdd.length) await prisma.conversationMember.createMany({ data: toAdd.map((userId) => ({ conversationId: conv.id, userId })), skipDuplicates: true });
+          if (toRemove.length) await prisma.conversationMember.deleteMany({ where: { id: { in: toRemove.map((m) => m.id) } } });
+        }
+      } catch (err) {
+        console.error('[structural sync] failed:', err);
+      }
+    }
+
     res.json(user);
   } catch (err) {
     if (err.code === 'P2002') {
