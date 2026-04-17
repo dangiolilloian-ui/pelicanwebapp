@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const crypto = require('crypto');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { audit } = require('../lib/audit');
@@ -43,6 +44,38 @@ router.put('/attendance-config', authenticate, requireRole('OWNER'), async (req,
     'Updated attendance points policy', overrides || { reset: true });
   const effective = await getConfig(req.user.organizationId);
   res.json({ defaults: DEFAULTS, overrides, effective });
+});
+
+// GET /api/org/invite-code — returns the current invite code for this org.
+// Generates one on the fly if none exists yet.
+router.get('/invite-code', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  let org = await prisma.organization.findUnique({
+    where: { id: req.user.organizationId },
+    select: { inviteCode: true, name: true },
+  });
+  if (!org.inviteCode) {
+    const code = crypto.randomBytes(6).toString('hex'); // 12 char hex string
+    org = await prisma.organization.update({
+      where: { id: req.user.organizationId },
+      data: { inviteCode: code },
+      select: { inviteCode: true, name: true },
+    });
+  }
+  res.json({ inviteCode: org.inviteCode });
+});
+
+// POST /api/org/invite-code/regenerate — invalidates the old code and creates
+// a fresh one. Anyone with the old link won't be able to join anymore.
+router.post('/invite-code/regenerate', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+  const code = crypto.randomBytes(6).toString('hex');
+  const org = await prisma.organization.update({
+    where: { id: req.user.organizationId },
+    data: { inviteCode: code },
+    select: { inviteCode: true },
+  });
+  await audit(req, 'INVITE_CODE_REGENERATE', 'ORG', req.user.organizationId,
+    'Regenerated employee invite code');
+  res.json({ inviteCode: org.inviteCode });
 });
 
 module.exports = router;

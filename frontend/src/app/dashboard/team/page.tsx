@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTeam } from '@/hooks/useTeam';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
+import { api } from '@/lib/api';
 import { AvailabilityModal } from '@/components/AvailabilityModal';
 import { EmployeeEditModal } from '@/components/EmployeeEditModal';
 import type { User } from '@/types';
@@ -24,6 +25,31 @@ export default function TeamPage() {
   // so the manager can copy it once and dismiss. We intentionally never
   // persist this client-side — closing the modal forgets it.
   const [linkModal, setLinkModal] = useState<{ name: string; url: string; kind: 'invite' | 'reset' } | null>(null);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+
+  useEffect(() => {
+    if (isManager) {
+      const token = localStorage.getItem('token');
+      api<{ inviteCode: string }>('/org/invite-code', { token })
+        .then((data) => setInviteCode(data.inviteCode))
+        .catch(() => {});
+    }
+  }, [isManager]);
+
+  const regenerateInviteCode = async () => {
+    const token = localStorage.getItem('token');
+    const data = await api<{ inviteCode: string }>('/org/invite-code/regenerate', { method: 'POST', token });
+    setInviteCode(data.inviteCode);
+    setInviteCopied(false);
+  };
+
+  const copyInviteLink = () => {
+    if (!inviteCode) return;
+    navigator.clipboard.writeText(`${window.location.origin}/join/${inviteCode}`);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2000);
+  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,6 +157,37 @@ export default function TeamPage() {
             {t('team.addButton')}
           </button>
         </form>
+      )}
+
+      {isManager && inviteCode && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Employee Invite Link</h3>
+            <button
+              onClick={regenerateInviteCode}
+              className="text-xs text-gray-500 dark:text-gray-400 hover:text-indigo-600"
+            >
+              Regenerate
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            Share this link with new employees so they can create their own account and join your team.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text" readOnly
+              value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${inviteCode}`}
+              onFocus={(e) => e.target.select()}
+              className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 px-3 py-2 text-xs font-mono"
+            />
+            <button
+              onClick={copyInviteLink}
+              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 transition whitespace-nowrap"
+            >
+              {inviteCopied ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+        </div>
       )}
 
       <input

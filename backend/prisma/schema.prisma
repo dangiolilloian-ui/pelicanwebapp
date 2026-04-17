@@ -8,9 +8,10 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  timezone  String   @default("America/New_York")
+  id         String   @id @default(uuid())
+  name       String
+  inviteCode String?  @unique @map("invite_code")
+  timezone   String   @default("America/New_York")
   // Points-based attendance policy: { windowDays, lateMinutes, pointsNoShow,
   // pointsLate, pointsEarlyOut, thresholdWarn, thresholdFinal }. Nullable so
   // untouched orgs fall back to server defaults in src/lib/attendancePoints.js.

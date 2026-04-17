@@ -286,4 +286,92 @@ router.post('/password-reset', resetLimiter, async (req, res) => {
   });
 });
 
+// --- Self-service employee join ---
+// Public endpoint. Employees visit /join/<inviteCode>, fill in their name,
+// email, and password, and get added to the org as an EMPLOYEE. The code
+// is a short random string stored on the organization row — managers can
+// regenerate it from the Team page if they want to invalidate the old one.
+
+// GET /auth/join/:code — validate code and return org name so the UI can
+// display "Join <org>" before the employee fills in their details.
+router.get('/join/:code', async (req, res) => {
+  const org = await prisma.organization.findUnique({
+    where: { inviteCode: req.params.code },
+    select: { id: true, name: true },
+  });
+  if (!org) return res.status(404).json({ error: 'Invalid invite code' });
+  res.json({ organizationName: org.name });
+});
+
+// POST /auth/join — create an EMPLOYEE account under the org that owns
+// the supplied invite code.
+router.post('/join', async (req, res) => {
+  try {
+    const { inviteCode, firstName, lastName, email, password, phone } = req.body;
+    if (!inviteCode || !firstName || !lastName || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const org = await prisma.organization.findUnique({
+      where: { inviteCode },
+      select: { id: true, name: true },
+    });
+    if (!org) return res.status(404).json({ error: 'Invalid invite code' });
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        email,
+        passwordHash,
+        firstName,
+        lastName,
+        phone: phone || null,
+        role: 'EMPLOYEE',
+        organizationId: org.id,
+      },
+    });
+
+    // Seed onboarding tasks if the org has a template
+    try {
+      const template = await prisma.onboardingTask.findMany({
+        where: { organizationId: org.id },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      });
+      if (template.length > 0) {
+        await prisma.onboardingProgress.createMany({
+          data: template.map((t) => ({
+            userId: user.id,
+            taskId: t.id,
+            title: t.title,
+          })),
+        });
+      }
+    } catch (err) {
+      console.error('[onboarding seed] failed:', err);
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role, organizationId: org.id },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({
+      token,
+      user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, role: user.role },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Join failed' });
+  }
+});
+
 module.exports = router;
