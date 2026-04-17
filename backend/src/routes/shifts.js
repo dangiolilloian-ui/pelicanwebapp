@@ -7,13 +7,17 @@ const { notifyMany, notify } = require('../lib/notify');
 const { checkAvailability } = require('../lib/availabilityCheck');
 const { overtimeWarnings } = require('../lib/weeklyHours');
 const { getHolidayOnDate, getHolidayDateSet } = require('../lib/holidays');
+const { shiftAccessFilter, canAccessLocation } = require('../lib/locationAccess');
 
 const router = Router();
 
 // List shifts for the org (with date range filter)
+// - OWNER: sees all shifts
+// - ADMIN/MANAGER: sees shifts at their assigned locations
+// - EMPLOYEE: sees only their own shifts
 router.get('/', authenticate, async (req, res) => {
   const { start, end } = req.query;
-  const where = { organizationId: req.user.organizationId };
+  const where = await shiftAccessFilter(req.user);
 
   if (start && end) {
     where.startTime = { gte: new Date(start), lte: new Date(end) };
@@ -35,6 +39,11 @@ router.get('/', authenticate, async (req, res) => {
 // Create shift
 router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { startTime, endTime, notes, userId, positionId, locationId } = req.body;
+
+  // Enforce location access — managers/admins can only create shifts at their locations
+  if (!(await canAccessLocation(req.user, locationId))) {
+    return res.status(403).json({ error: 'You do not have access to this location' });
+  }
 
   // Block scheduling on holidays
   const holiday = await getHolidayOnDate(req.user.organizationId, startTime);
@@ -73,6 +82,21 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
 // Update shift
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { startTime, endTime, notes, status, userId, positionId, locationId } = req.body;
+
+  // Enforce location access on the existing shift
+  const existing = await prisma.shift.findUnique({ where: { id: req.params.id }, select: { locationId: true, organizationId: true } });
+  if (!existing || existing.organizationId !== req.user.organizationId) {
+    return res.status(404).json({ error: 'Shift not found' });
+  }
+  if (!(await canAccessLocation(req.user, existing.locationId))) {
+    return res.status(403).json({ error: 'You do not have access to this location' });
+  }
+  // Also check the new location if they're moving the shift
+  if (locationId !== undefined && locationId !== existing.locationId) {
+    if (!(await canAccessLocation(req.user, locationId))) {
+      return res.status(403).json({ error: 'You do not have access to the target location' });
+    }
+  }
 
   // If the start time is changing, check the new date isn't a holiday
   if (startTime) {
@@ -125,6 +149,12 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
 // Delete shift
 router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const before = await prisma.shift.findUnique({ where: { id: req.params.id }, include: { user: { select: { firstName: true, lastName: true } } } });
+  if (!before || before.organizationId !== req.user.organizationId) {
+    return res.status(404).json({ error: 'Shift not found' });
+  }
+  if (!(await canAccessLocation(req.user, before.locationId))) {
+    return res.status(403).json({ error: 'You do not have access to this location' });
+  }
   await prisma.shift.delete({ where: { id: req.params.id } });
   if (before) {
     const who = before.user ? `${before.user.firstName} ${before.user.lastName}` : 'unassigned';
@@ -139,9 +169,11 @@ router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), as
 router.post('/copy-week', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { sourceStart, sourceEnd, targetStart } = req.body;
 
+  // Only copy shifts the user has location access to
+  const accessFilter = await shiftAccessFilter(req.user);
   const sourceShifts = await prisma.shift.findMany({
     where: {
-      organizationId: req.user.organizationId,
+      ...accessFilter,
       startTime: { gte: new Date(sourceStart), lte: new Date(sourceEnd) },
     },
   });
@@ -191,8 +223,9 @@ router.post('/bulk-delete', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids array required' });
   }
+  const accessFilter = await shiftAccessFilter(req.user);
   const result = await prisma.shift.deleteMany({
-    where: { id: { in: ids }, organizationId: req.user.organizationId },
+    where: { ...accessFilter, id: { in: ids } },
   });
   res.json({ deleted: result.count });
 });
@@ -203,8 +236,9 @@ router.post('/bulk-assign', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids array required' });
   }
+  const accessFilter = await shiftAccessFilter(req.user);
   const result = await prisma.shift.updateMany({
-    where: { id: { in: ids }, organizationId: req.user.organizationId },
+    where: { ...accessFilter, id: { in: ids } },
     data: { userId: userId || null },
   });
   res.json({ updated: result.count });
@@ -216,8 +250,9 @@ router.post('/bulk-publish', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGE
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids array required' });
   }
+  const accessFilter = await shiftAccessFilter(req.user);
   const result = await prisma.shift.updateMany({
-    where: { id: { in: ids }, organizationId: req.user.organizationId, status: 'DRAFT' },
+    where: { ...accessFilter, id: { in: ids }, status: 'DRAFT' },
     data: { status: 'PUBLISHED' },
   });
   res.json({ published: result.count });
@@ -227,21 +262,20 @@ router.post('/bulk-publish', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGE
 router.post('/publish', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end } = req.body;
 
+  const accessFilter = await shiftAccessFilter(req.user);
+  const publishWhere = {
+    ...accessFilter,
+    status: 'DRAFT',
+    startTime: { gte: new Date(start), lte: new Date(end) },
+  };
+
   const toPublish = await prisma.shift.findMany({
-    where: {
-      organizationId: req.user.organizationId,
-      status: 'DRAFT',
-      startTime: { gte: new Date(start), lte: new Date(end) },
-    },
+    where: publishWhere,
     select: { userId: true },
   });
 
   await prisma.shift.updateMany({
-    where: {
-      organizationId: req.user.organizationId,
-      status: 'DRAFT',
-      startTime: { gte: new Date(start), lte: new Date(end) },
-    },
+    where: publishWhere,
     data: { status: 'PUBLISHED', confirmedAt: null },
   });
 
@@ -479,11 +513,12 @@ router.post('/:id/drop', authenticate, async (req, res) => {
 });
 
 // ---------- Open shifts marketplace ----------
-// List unassigned published shifts in a date range
+// List unassigned published shifts in a date range (scoped by location access)
 router.get('/open', authenticate, async (req, res) => {
   const { start, end } = req.query;
+  const accessFilter = await shiftAccessFilter(req.user);
   const where = {
-    organizationId: req.user.organizationId,
+    ...accessFilter,
     status: 'PUBLISHED',
     userId: null,
   };

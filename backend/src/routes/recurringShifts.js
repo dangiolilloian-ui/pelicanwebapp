@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { getHolidayDateSet } = require('../lib/holidays');
+const { getUserLocationIds } = require('../lib/locationAccess');
 
 const router = Router();
 
@@ -46,8 +47,14 @@ async function hydrate(rules, organizationId) {
 }
 
 router.get('/', authenticate, async (req, res) => {
+  const where = { organizationId: req.user.organizationId };
+  // Scope to user's locations for non-owners
+  const locationIds = await getUserLocationIds(req.user);
+  if (locationIds !== null) {
+    where.OR = [{ locationId: { in: locationIds } }, { locationId: null }];
+  }
   const rules = await prisma.recurringShift.findMany({
-    where: { organizationId: req.user.organizationId },
+    where,
     orderBy: [{ active: 'desc' }, { dayOfWeek: 'asc' }, { startTime: 'asc' }],
   });
   res.json(await hydrate(rules, req.user.organizationId));
@@ -125,12 +132,21 @@ router.post('/materialize', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER
   const weekStartMs = base.getTime();
   const weekEndMs = weekStartMs + 7 * 24 * 3600 * 1000;
 
+  // Scope to user's locations for non-owners
+  const locationIds = await getUserLocationIds(req.user);
+  const locFilter = locationIds !== null
+    ? { AND: [
+        { OR: [{ locationId: { in: locationIds } }, { locationId: null }] },
+        { OR: [{ validUntil: null }, { validUntil: { gte: new Date(weekStartMs) } }] },
+      ]}
+    : { OR: [{ validUntil: null }, { validUntil: { gte: new Date(weekStartMs) } }] };
+
   const rules = await prisma.recurringShift.findMany({
     where: {
       organizationId: req.user.organizationId,
       active: true,
       validFrom: { lte: new Date(weekEndMs) },
-      OR: [{ validUntil: null }, { validUntil: { gte: new Date(weekStartMs) } }],
+      ...locFilter,
     },
   });
 
