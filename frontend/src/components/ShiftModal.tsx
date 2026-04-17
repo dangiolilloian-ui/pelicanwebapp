@@ -82,9 +82,19 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
     e.preventDefault();
     setSaving(true);
     try {
+      // Build proper local-time Date objects so the ISO string sent to the
+      // backend includes the correct UTC offset (avoids timezone shift bugs).
+      const [sy, sm, sd] = date.split('-').map(Number);
+      const [sh, smin] = startTime.split(':').map(Number);
+      const [eh, emin] = endTime.split(':').map(Number);
+      const startDt = new Date(sy, sm - 1, sd, sh, smin, 0);
+      const endDt = new Date(sy, sm - 1, sd, eh, emin, 0);
+      // Handle overnight shifts (end before start means next day)
+      if (endDt <= startDt) endDt.setDate(endDt.getDate() + 1);
+
       await onSave({
-        startTime: `${date}T${startTime}:00`,
-        endTime: `${date}T${endTime}:00`,
+        startTime: startDt.toISOString(),
+        endTime: endDt.toISOString(),
         userId: userId || null,
         positionId: positionId || null,
         locationId: locationId || null,
