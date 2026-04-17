@@ -3,8 +3,7 @@ const prisma = require('../config/db');
 /**
  * Get the location IDs the current user has access to.
  * - OWNER: returns null (meaning all locations — no filtering needed)
- * - ADMIN/MANAGER: returns array of their assigned location IDs
- * - EMPLOYEE: returns null (employees are filtered by userId, not location)
+ * - ADMIN/MANAGER/EMPLOYEE: returns array of their assigned location IDs
  */
 async function getUserLocationIds(user) {
   if (user.role === 'OWNER') return null; // no restriction
@@ -21,7 +20,7 @@ async function getUserLocationIds(user) {
  * Build a Prisma `where` clause for shifts based on the user's role and locations.
  * - OWNER: sees all shifts in the org
  * - ADMIN/MANAGER: sees shifts at their assigned locations (+ unassigned-location shifts)
- * - EMPLOYEE: sees only their own shifts
+ * - EMPLOYEE: sees shifts at their assigned locations (+ their own shifts regardless of location)
  */
 async function shiftAccessFilter(user) {
   const base = { organizationId: user.organizationId };
@@ -41,8 +40,19 @@ async function shiftAccessFilter(user) {
     };
   }
 
-  // EMPLOYEE: only their own shifts
-  return { ...base, userId: user.id };
+  // EMPLOYEE: sees all shifts at their assigned locations
+  const empLocationIds = await getUserLocationIds(user);
+  if (!empLocationIds || empLocationIds.length === 0) {
+    // No locations assigned — fall back to only their own shifts
+    return { ...base, userId: user.id };
+  }
+  return {
+    ...base,
+    OR: [
+      { locationId: { in: empLocationIds } },
+      { userId: user.id }, // always see your own shifts even if no location set
+    ],
+  };
 }
 
 /**
