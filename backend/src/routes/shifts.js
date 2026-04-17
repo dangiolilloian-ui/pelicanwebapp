@@ -6,6 +6,7 @@ const { computeCoverageGaps } = require('../lib/coverage');
 const { notifyMany, notify } = require('../lib/notify');
 const { checkAvailability } = require('../lib/availabilityCheck');
 const { overtimeWarnings } = require('../lib/weeklyHours');
+const { getHolidayOnDate, getHolidayDateSet } = require('../lib/holidays');
 
 const router = Router();
 
@@ -34,6 +35,12 @@ router.get('/', authenticate, async (req, res) => {
 // Create shift
 router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { startTime, endTime, notes, userId, positionId, locationId } = req.body;
+
+  // Block scheduling on holidays
+  const holiday = await getHolidayOnDate(req.user.organizationId, startTime);
+  if (holiday) {
+    return res.status(400).json({ error: `Cannot schedule on ${holiday.name} (holiday)` });
+  }
 
   const shift = await prisma.shift.create({
     data: {
@@ -66,6 +73,14 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
 // Update shift
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { startTime, endTime, notes, status, userId, positionId, locationId } = req.body;
+
+  // If the start time is changing, check the new date isn't a holiday
+  if (startTime) {
+    const holiday = await getHolidayOnDate(req.user.organizationId, startTime);
+    if (holiday) {
+      return res.status(400).json({ error: `Cannot schedule on ${holiday.name} (holiday)` });
+    }
+  }
 
   const before = await prisma.shift.findUnique({ where: { id: req.params.id }, select: { userId: true, startTime: true, endTime: true, status: true } });
   const shift = await prisma.shift.update({
@@ -135,8 +150,18 @@ router.post('/copy-week', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER')
   const targetMon = new Date(targetStart).getTime();
   const offset = targetMon - sourceMon;
 
+  // Get holidays in the target week so we can skip them
+  const targetEnd = new Date(targetMon + 7 * 24 * 3600 * 1000);
+  const holidayDates = await getHolidayDateSet(req.user.organizationId, new Date(targetMon), targetEnd);
+
+  const toCreate = sourceShifts.filter((s) => {
+    const newStart = new Date(s.startTime.getTime() + offset);
+    const key = `${newStart.getUTCFullYear()}-${String(newStart.getUTCMonth() + 1).padStart(2, '0')}-${String(newStart.getUTCDate()).padStart(2, '0')}`;
+    return !holidayDates.has(key);
+  });
+
   const created = await Promise.all(
-    sourceShifts.map((s) =>
+    toCreate.map((s) =>
       prisma.shift.create({
         data: {
           startTime: new Date(s.startTime.getTime() + offset),
@@ -275,7 +300,7 @@ router.get('/:id/checklist', authenticate, async (req, res) => {
   if (!shift || shift.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Shift not found' });
   }
-  const isManager = req.user.role === 'OWNER' || req.user.role === 'MANAGER';
+  const isManager = req.user.role === 'OWNER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
   if (!isManager && shift.userId !== req.user.id) {
     return res.status(403).json({ error: 'Not your shift' });
   }
@@ -323,7 +348,7 @@ router.post('/:id/checklist/:itemId', authenticate, async (req, res) => {
   if (!shift || shift.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Shift not found' });
   }
-  const isManager = req.user.role === 'OWNER' || req.user.role === 'MANAGER';
+  const isManager = req.user.role === 'OWNER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
   if (!isManager && shift.userId !== req.user.id) {
     return res.status(403).json({ error: 'Not your shift' });
   }
@@ -349,7 +374,7 @@ router.delete('/:id/checklist/:itemId', authenticate, async (req, res) => {
   if (!shift || shift.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Shift not found' });
   }
-  const isManager = req.user.role === 'OWNER' || req.user.role === 'MANAGER';
+  const isManager = req.user.role === 'OWNER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
   if (!isManager && shift.userId !== req.user.id) {
     return res.status(403).json({ error: 'Not your shift' });
   }
@@ -368,7 +393,7 @@ router.get('/:id/previous-handoff', authenticate, async (req, res) => {
     return res.status(404).json({ error: 'Shift not found' });
   }
   // Only the assigned employee or a manager should see handoff notes.
-  const isManager = req.user.role === 'OWNER' || req.user.role === 'MANAGER';
+  const isManager = req.user.role === 'OWNER' || req.user.role === 'ADMIN' || req.user.role === 'MANAGER';
   if (!isManager && shift.userId !== req.user.id) {
     return res.status(403).json({ error: 'Not your shift' });
   }
@@ -435,7 +460,7 @@ router.post('/:id/drop', authenticate, async (req, res) => {
   const managers = await prisma.user.findMany({
     where: {
       organizationId: req.user.organizationId,
-      role: { in: ['OWNER', 'MANAGER'] },
+      role: { in: ['OWNER', 'ADMIN', 'MANAGER'] },
     },
     select: { id: true },
   });
@@ -501,7 +526,7 @@ router.post('/:id/claim', authenticate, async (req, res) => {
     const managers = await prisma.user.findMany({
       where: {
         organizationId: req.user.organizationId,
-        role: { in: ['OWNER', 'MANAGER'] },
+        role: { in: ['OWNER', 'ADMIN', 'MANAGER'] },
       },
       select: { id: true },
     });

@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { getHolidayDateSet } = require('../lib/holidays');
 
 const router = Router();
 
@@ -172,6 +173,9 @@ router.post('/materialize', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER
     return ranges.some((r) => dayMs >= r.start && dayMs <= r.end);
   };
 
+  // Fetch holidays in this week so recurring shifts skip holiday dates
+  const holidayDates = await getHolidayDateSet(req.user.organizationId, new Date(weekStartMs), new Date(weekEndMs));
+
   // Schedule grid uses Monday as index 0; RecurringShift.dayOfWeek is
   // 0=Sun..6=Sat. Map each rule's dayOfWeek to a Monday-based offset.
   const mondayOffset = (dow) => (dow === 0 ? 6 : dow - 1);
@@ -195,6 +199,13 @@ router.post('/materialize', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER
     // Skip if this rule's user has approved time-off covering that day.
     if (r.userId && isOnTimeOff(r.userId, day.getTime())) {
       skipped.push({ ruleId: r.id, reason: 'user on time-off' });
+      continue;
+    }
+
+    // Skip if this day is a holiday
+    const dayKey = `${day.getUTCFullYear()}-${String(day.getUTCMonth() + 1).padStart(2, '0')}-${String(day.getUTCDate()).padStart(2, '0')}`;
+    if (holidayDates.has(dayKey)) {
+      skipped.push({ ruleId: r.id, reason: 'holiday' });
       continue;
     }
 

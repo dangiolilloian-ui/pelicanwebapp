@@ -31,6 +31,7 @@ interface WeekCalendarProps {
   availabilities?: AvailabilityEntry[];
   timeOff?: TimeOffEntry[];
   templates?: ShiftTemplate[];
+  holidays?: Map<string, string>;
 }
 
 interface DragData {
@@ -58,9 +59,17 @@ export function WeekCalendar({
   availabilities = [],
   timeOff = [],
   templates = [],
+  holidays = new Map(),
 }: WeekCalendarProps) {
   const t = useT();
   const days = getWeekDays(weekStart);
+
+  // Holiday lookup helper
+  const isHoliday = (day: Date): string | undefined => {
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    return holidays.get(key);
+  };
+
   const [modal, setModal] = useState<{ shift?: Shift; date?: Date; userId?: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const dragDataRef = useRef<DragData | null>(null);
@@ -403,15 +412,23 @@ export function WeekCalendar({
           </div>
           {days.map((day) => {
             const isToday = isSameDay(day, new Date());
+            const hName = isHoliday(day);
             return (
               <div
                 key={day.toISOString()}
                 className={clsx(
                   'px-2 py-2 text-sm font-medium text-center border-r border-gray-200 dark:border-gray-800 last:border-r-0',
-                  isToday ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 dark:text-gray-400'
+                  hName
+                    ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                    : isToday ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 dark:text-gray-400'
                 )}
               >
                 {formatDate(day)}
+                {hName && (
+                  <div className="text-[10px] font-semibold text-red-600 dark:text-red-400 truncate mt-0.5">
+                    {hName}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -458,11 +475,15 @@ export function WeekCalendar({
                 // the employee's declared availability/time-off.
                 const dropConflict = isOver && (status === 'unavailable' || status === 'time-off');
 
+                const holidayName = isHoliday(day);
+
                 return (
                   <div
                     key={day.toISOString()}
                     title={
-                      status === 'time-off'
+                      holidayName
+                        ? `🚫 ${holidayName} — scheduling blocked`
+                        : status === 'time-off'
                         ? t('schedule.approvedTimeOff')
                         : status === 'unavailable'
                         ? t('schedule.markedUnavailable')
@@ -472,18 +493,21 @@ export function WeekCalendar({
                     }
                     className={clsx(
                       'relative px-1 py-1 border-r border-gray-200 dark:border-gray-800 last:border-r-0 min-h-[60px] transition-colors',
-                      // Base overlay tint by status
-                      status === 'time-off' && 'bg-amber-50/60 dark:bg-amber-900/10',
-                      status === 'unavailable' && 'bg-red-50/60 dark:bg-red-900/10',
-                      status === 'available' && 'bg-green-50/40 dark:bg-green-900/10',
+                      // Holiday blocking — takes precedence
+                      holidayName && 'bg-red-50/80 dark:bg-red-900/20 cursor-not-allowed',
+                      // Base overlay tint by status (only if not a holiday)
+                      !holidayName && status === 'time-off' && 'bg-amber-50/60 dark:bg-amber-900/10',
+                      !holidayName && status === 'unavailable' && 'bg-red-50/60 dark:bg-red-900/10',
+                      !holidayName && status === 'available' && 'bg-green-50/40 dark:bg-green-900/10',
                       // Drag-over feedback overrides base tint
-                      isOver && !dropConflict && 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset',
-                      dropConflict && 'bg-red-100 ring-2 ring-red-400 ring-inset'
+                      !holidayName && isOver && !dropConflict && 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset',
+                      !holidayName && dropConflict && 'bg-red-100 ring-2 ring-red-400 ring-inset'
                     )}
-                    onDragOver={(e) => handleDragOver(e, cellKey)}
+                    onDragOver={(e) => !holidayName && handleDragOver(e, cellKey)}
                     onDragLeave={handleDragLeave}
-                    onDrop={(e) => handleDrop(e, member.id, day)}
+                    onDrop={(e) => !holidayName && handleDrop(e, member.id, day)}
                     onClick={() => {
+                      if (holidayName) return; // Block scheduling on holidays
                       if (cellShifts.length === 0) {
                         const userId = member.id === '__unassigned__' ? undefined : member.id;
                         // With templates defined, show the quick-add popover

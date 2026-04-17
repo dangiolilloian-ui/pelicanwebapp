@@ -17,6 +17,7 @@ interface MonthCalendarProps {
   onUpdateShift: (id: string, data: any) => Promise<any>;
   onDeleteShift: (id: string) => Promise<void>;
   onMonthChange: (date: Date) => void;
+  holidays?: Map<string, string>;
 }
 
 export function MonthCalendar({
@@ -29,8 +30,14 @@ export function MonthCalendar({
   onUpdateShift,
   onDeleteShift,
   onMonthChange,
+  holidays = new Map(),
 }: MonthCalendarProps) {
   const t = useT();
+
+  const isHoliday = (day: Date): string | undefined => {
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    return holidays.get(key);
+  };
   const WEEKDAY_LABELS = [t('monthCal.mon'), t('monthCal.tue'), t('monthCal.wed'), t('monthCal.thu'), t('monthCal.fri'), t('monthCal.sat'), t('monthCal.sun')];
   const monthStart = getMonthStart(anchor);
   const days = getMonthGrid(anchor);
@@ -94,26 +101,37 @@ export function MonthCalendar({
             const dayShifts = shiftsForDay(day);
             const inMonth = day.getMonth() === monthStart.getMonth();
             const today = isSameDay(day, new Date());
+            const hName = isHoliday(day);
             const visible = dayShifts.slice(0, 3);
             const extra = dayShifts.length - visible.length;
             return (
               <div
                 key={day.toISOString()}
-                onClick={() => setModal({ date: day })}
+                onClick={() => !hName && setModal({ date: day })}
+                title={hName ? `${hName} — scheduling blocked` : undefined}
                 className={clsx(
-                  'border-r border-b border-gray-100 dark:border-gray-800 last-of-type:border-r-0 p-1.5 cursor-pointer transition hover:bg-indigo-50/40 dark:hover:bg-indigo-950/30 overflow-hidden',
-                  !inMonth && 'bg-gray-50/60 dark:bg-gray-950/40'
+                  'border-r border-b border-gray-100 dark:border-gray-800 last-of-type:border-r-0 p-1.5 transition overflow-hidden',
+                  hName
+                    ? 'bg-red-50/80 dark:bg-red-900/20 cursor-not-allowed'
+                    : 'cursor-pointer hover:bg-indigo-50/40 dark:hover:bg-indigo-950/30',
+                  !inMonth && !hName && 'bg-gray-50/60 dark:bg-gray-950/40'
                 )}
               >
-                <div
-                  className={clsx(
-                    'text-xs font-medium mb-1 inline-flex items-center justify-center rounded-full h-5 min-w-[20px] px-1',
-                    today && 'bg-indigo-600 text-white',
-                    !today && inMonth && 'text-gray-700 dark:text-gray-300',
-                    !today && !inMonth && 'text-gray-400 dark:text-gray-600'
+                <div className="flex items-center gap-1">
+                  <div
+                    className={clsx(
+                      'text-xs font-medium mb-1 inline-flex items-center justify-center rounded-full h-5 min-w-[20px] px-1',
+                      hName && 'bg-red-600 text-white',
+                      !hName && today && 'bg-indigo-600 text-white',
+                      !hName && !today && inMonth && 'text-gray-700 dark:text-gray-300',
+                      !hName && !today && !inMonth && 'text-gray-400 dark:text-gray-600'
+                    )}
+                  >
+                    {day.getDate()}
+                  </div>
+                  {hName && (
+                    <span className="text-[9px] font-semibold text-red-600 dark:text-red-400 truncate mb-1">{hName}</span>
                   )}
-                >
-                  {day.getDate()}
                 </div>
                 <div className="space-y-0.5">
                   {visible.map((s) => (

@@ -10,6 +10,7 @@ import { usePositions } from '@/hooks/usePositions';
 import { useLocations } from '@/hooks/useLocations';
 import { useAvailability } from '@/hooks/useAvailability';
 import { useTemplates } from '@/hooks/useTemplates';
+import { useHolidays, useHolidayDateSet } from '@/hooks/useHolidays';
 import { getWeekStart, addDays, getMonthGrid } from '@/lib/dates';
 import { useT } from '@/lib/i18n';
 import clsx from 'clsx';
@@ -38,6 +39,8 @@ export default function SchedulePage() {
   const { locations } = useLocations();
   const { availabilities, timeOff } = useAvailability();
   const { templates } = useTemplates();
+  const { holidays } = useHolidays();
+  const holidayMap = useHolidayDateSet(holidays);
 
   return (
     <div className="p-6">
@@ -92,6 +95,7 @@ export default function SchedulePage() {
           availabilities={availabilities}
           timeOff={timeOff}
           templates={templates}
+          holidays={holidayMap}
         />
         </>
       ) : (
@@ -105,6 +109,7 @@ export default function SchedulePage() {
           onUpdateShift={updateShift}
           onDeleteShift={deleteShift}
           onMonthChange={setMonthAnchor}
+          holidays={holidayMap}
         />
       )}
     </div>
