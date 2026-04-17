@@ -33,7 +33,7 @@ router.get('/', authenticate, async (req, res) => {
   res.json(rows);
 });
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { userId, name, issuedAt, expiresAt, reference } = req.body;
   if (!userId || !name) {
     return res.status(400).json({ error: 'userId and name required' });
@@ -57,7 +57,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(cert);
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.certification.findUnique({
     where: { id: req.params.id },
     include: { user: { select: { organizationId: true } } },
@@ -79,7 +79,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(cert);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.certification.findUnique({
     where: { id: req.params.id },
     include: { user: { select: { organizationId: true } } },

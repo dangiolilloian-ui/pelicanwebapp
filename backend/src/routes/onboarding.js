@@ -20,7 +20,7 @@ router.get('/template', authenticate, async (req, res) => {
   res.json(tasks);
 });
 
-router.post('/template', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/template', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { title, description, sortOrder } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
   const task = await prisma.onboardingTask.create({
@@ -34,7 +34,7 @@ router.post('/template', authenticate, requireRole('OWNER', 'MANAGER'), async (r
   res.status(201).json(task);
 });
 
-router.put('/template/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/template/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.onboardingTask.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });
@@ -51,7 +51,7 @@ router.put('/template/:id', authenticate, requireRole('OWNER', 'MANAGER'), async
   res.json(updated);
 });
 
-router.delete('/template/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/template/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.onboardingTask.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });
@@ -89,7 +89,7 @@ router.get('/users/:id', authenticate, async (req, res) => {
   res.json(rows);
 });
 
-router.post('/users/:id/seed', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/users/:id/seed', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const target = await prisma.user.findUnique({
     where: { id: req.params.id },
     select: { organizationId: true },
@@ -121,7 +121,7 @@ router.post('/users/:id/seed', authenticate, requireRole('OWNER', 'MANAGER'), as
   res.json({ created: toCreate.length });
 });
 
-router.put('/progress/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/progress/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const row = await prisma.onboardingProgress.findUnique({ where: { id: req.params.id } });
   if (!row) return res.status(404).json({ error: 'Not found' });
 
@@ -148,7 +148,7 @@ router.put('/progress/:id', authenticate, requireRole('OWNER', 'MANAGER'), async
   res.json(updated);
 });
 
-router.get('/pending', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/pending', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   // OnboardingProgress has no FK relation to User in the schema, so we
   // can't filter by `user.organizationId` directly. Fetch org users first,
   // then pull incomplete rows for those userIds.

@@ -50,7 +50,7 @@ router.post('/me/ical-token', authenticate, async (req, res) => {
 });
 
 // Invite / create employee
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { email, firstName, lastName, phone, role, password } = req.body;
 
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -128,7 +128,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
 // Manager-triggered password reset. Generates a fresh single-use token for
 // the target employee and returns it so the manager can send the link via
 // whatever channel they use (SMS, in person, etc). Does NOT notify anyone.
-router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const target = await prisma.user.findUnique({
     where: { id: req.params.id },
     select: { id: true, organizationId: true },
@@ -148,7 +148,7 @@ router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'MANAGER'), as
 });
 
 // Update user
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { firstName, lastName, phone, role, weeklyHoursCap, pin, birthDate, positionIds, locationIds } = req.body;
 
   // Validate PIN format + uniqueness within org

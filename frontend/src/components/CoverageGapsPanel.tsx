@@ -33,7 +33,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export function CoverageGapsPanel({ rangeStart, rangeEnd, refreshKey = 0 }: Props) {
   const t = useT();
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasRules, setHasRules] = useState(true);

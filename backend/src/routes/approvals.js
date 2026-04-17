@@ -4,7 +4,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 
 const router = Router();
 
-router.use(authenticate, requireRole('OWNER', 'MANAGER'));
+router.use(authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'));
 
 // GET /approvals
 // Unified manager queue — everything that needs a decision, in one payload,

@@ -63,7 +63,7 @@ export default function MessagesPage() {
   const [groupName, setGroupName] = useState('');
   const [newError, setNewError] = useState('');
 
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
 
   // ─── Fetch conversations ───────────────────────────────────────────
 
@@ -309,7 +309,7 @@ export default function MessagesPage() {
       <div className="w-80 border-r border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-900">
         <div className="p-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Messages</h2>
-          {(user?.role === 'MANAGER' || user?.role === 'OWNER') && (
+          {(user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER') && (
             <button
               onClick={openNewModal}
               className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"

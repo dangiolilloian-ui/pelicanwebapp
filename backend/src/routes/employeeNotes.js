@@ -7,7 +7,7 @@ const router = Router();
 // All endpoints here are manager-only — employee notes are an internal
 // notebook, not a system the employee can see. We scope every read/write
 // by verifying the target user is in the same organization.
-router.use(authenticate, requireRole('OWNER', 'MANAGER'));
+router.use(authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'));
 
 async function ensureSameOrg(req, targetUserId) {
   const target = await prisma.user.findUnique({

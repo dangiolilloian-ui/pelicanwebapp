@@ -67,7 +67,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // Approve/Deny
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { status } = req.body;
   const request = await prisma.timeOffRequest.update({
     where: { id: req.params.id },

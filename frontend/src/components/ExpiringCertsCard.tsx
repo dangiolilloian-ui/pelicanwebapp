@@ -18,7 +18,7 @@ interface Certification {
 export function ExpiringCertsCard() {
   const t = useT();
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [expired, setExpired] = useState<Certification[]>([]);
   const [soon, setSoon] = useState<Certification[]>([]);
 

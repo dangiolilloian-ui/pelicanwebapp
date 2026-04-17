@@ -32,7 +32,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // Create shift
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { startTime, endTime, notes, userId, positionId, locationId } = req.body;
 
   const shift = await prisma.shift.create({
@@ -64,7 +64,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
 });
 
 // Update shift
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { startTime, endTime, notes, status, userId, positionId, locationId } = req.body;
 
   const before = await prisma.shift.findUnique({ where: { id: req.params.id }, select: { userId: true, startTime: true, endTime: true, status: true } });
@@ -108,7 +108,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
 });
 
 // Delete shift
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const before = await prisma.shift.findUnique({ where: { id: req.params.id }, include: { user: { select: { firstName: true, lastName: true } } } });
   await prisma.shift.delete({ where: { id: req.params.id } });
   if (before) {
@@ -121,7 +121,7 @@ router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req,
 });
 
 // Copy shifts from one week to another
-router.post('/copy-week', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/copy-week', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { sourceStart, sourceEnd, targetStart } = req.body;
 
   const sourceShifts = await prisma.shift.findMany({
@@ -161,7 +161,7 @@ router.post('/copy-week', authenticate, requireRole('OWNER', 'MANAGER'), async (
 });
 
 // Bulk delete shifts by IDs
-router.post('/bulk-delete', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/bulk-delete', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids array required' });
@@ -173,7 +173,7 @@ router.post('/bulk-delete', authenticate, requireRole('OWNER', 'MANAGER'), async
 });
 
 // Bulk reassign shifts to a user
-router.post('/bulk-assign', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/bulk-assign', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { ids, userId } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids array required' });
@@ -186,7 +186,7 @@ router.post('/bulk-assign', authenticate, requireRole('OWNER', 'MANAGER'), async
 });
 
 // Bulk publish shifts by IDs
-router.post('/bulk-publish', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/bulk-publish', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids array required' });
@@ -199,7 +199,7 @@ router.post('/bulk-publish', authenticate, requireRole('OWNER', 'MANAGER'), asyn
 });
 
 // Publish shifts for a date range
-router.post('/publish', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/publish', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end } = req.body;
 
   const toPublish = await prisma.shift.findMany({
@@ -525,7 +525,7 @@ router.post('/:id/claim', authenticate, async (req, res) => {
 });
 
 // Manager approves a claim — assigns the shift to that user and denies the rest
-router.post('/claims/:claimId/approve', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/claims/:claimId/approve', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const claim = await prisma.shiftClaim.findUnique({
     where: { id: req.params.claimId },
     include: { shift: true },
@@ -563,7 +563,7 @@ router.post('/claims/:claimId/approve', authenticate, requireRole('OWNER', 'MANA
 });
 
 // Manager denies a single claim
-router.post('/claims/:claimId/deny', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/claims/:claimId/deny', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const claim = await prisma.shiftClaim.findUnique({
     where: { id: req.params.claimId },
     include: { shift: { select: { organizationId: true, startTime: true } } },
@@ -605,7 +605,7 @@ router.post('/claims/:claimId/cancel', authenticate, async (req, res) => {
 // time off, declared availability allows it, and (optionally) holds the
 // same position. Managers use this when scrambling for a last-minute
 // fill-in instead of scrolling the roster.
-router.get('/:id/candidates', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/:id/candidates', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const shift = await prisma.shift.findUnique({
     where: { id: req.params.id },
     include: { position: true },

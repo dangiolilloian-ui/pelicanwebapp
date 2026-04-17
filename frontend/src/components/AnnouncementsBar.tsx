@@ -23,7 +23,7 @@ interface Announcement {
 export function AnnouncementsBar() {
   const { token, user } = useAuth();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [items, setItems] = useState<Announcement[]>([]);
   const [showForm, setShowForm] = useState(false);
 

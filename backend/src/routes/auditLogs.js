@@ -4,7 +4,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 
 const router = Router();
 
-router.use(authenticate, requireRole('OWNER', 'MANAGER'));
+router.use(authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'));
 
 // Build the common `where` clause so GET / and GET /export stay in sync.
 // Keeping this in one place avoids the classic bug where export silently

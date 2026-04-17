@@ -35,7 +35,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps = {}) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
 
   return (
     <>

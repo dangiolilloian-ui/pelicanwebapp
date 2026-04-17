@@ -17,7 +17,7 @@ interface Holiday {
 export function HolidaysSection() {
   const t = useT();
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());

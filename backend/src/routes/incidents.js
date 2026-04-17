@@ -97,7 +97,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // Resolve an incident (manager only).
-router.put('/:id/resolve', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id/resolve', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const inc = await prisma.incident.findUnique({ where: { id: req.params.id } });
   if (!inc || inc.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });
@@ -115,7 +115,7 @@ router.put('/:id/resolve', authenticate, requireRole('OWNER', 'MANAGER'), async 
 });
 
 // Reopen a resolved incident (manager only).
-router.put('/:id/reopen', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id/reopen', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const inc = await prisma.incident.findUnique({ where: { id: req.params.id } });
   if (!inc || inc.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });

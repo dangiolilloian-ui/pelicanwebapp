@@ -21,7 +21,7 @@ export function CoverageRequirementsSection() {
   const { token, user } = useAuth();
   const t = useT();
   const DAYS = [t('availability.sun'), t('availability.mon'), t('availability.tue'), t('availability.wed'), t('availability.thu'), t('availability.fri'), t('availability.sat')];
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [rows, setRows] = useState<Requirement[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [form, setForm] = useState({

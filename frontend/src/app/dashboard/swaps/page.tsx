@@ -35,7 +35,7 @@ const statusStyles: Record<string, string> = {
 
 export default function SwapsPage() {
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const t = useT();
   const [swaps, setSwaps] = useState<Swap[]>([]);
   const [loading, setLoading] = useState(true);

@@ -12,7 +12,7 @@ router.get('/', authenticate, async (req, res) => {
   res.json(positions);
 });
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, color, hourlyRate } = req.body;
   const position = await prisma.position.create({
     data: {
@@ -25,7 +25,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(position);
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, color, hourlyRate } = req.body;
   const position = await prisma.position.update({
     where: { id: req.params.id },
@@ -38,7 +38,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(position);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   await prisma.position.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });

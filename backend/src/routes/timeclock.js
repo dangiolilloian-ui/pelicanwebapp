@@ -202,7 +202,7 @@ router.post('/break/end', authenticate, async (req, res) => {
 });
 
 // Manager edit (correct mistakes)
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { clockIn, clockOut, notes } = req.body;
   const entry = await prisma.timeEntry.update({
     where: { id: req.params.id },
@@ -215,7 +215,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(entry);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   await prisma.timeEntry.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });

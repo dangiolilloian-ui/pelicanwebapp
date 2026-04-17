@@ -7,7 +7,7 @@ const { checkMinorShifts } = require('../lib/minorRules');
 const router = Router();
 
 // Labor report for a date range
-router.get('/labor', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/labor', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end required' });
 
@@ -148,7 +148,7 @@ router.get('/labor', authenticate, requireRole('OWNER', 'MANAGER'), async (req, 
 // Attendance report: for each PUBLISHED shift in the range that has already
 // ended, classify it as on-time / late / no-show based on the TimeEntry that
 // linked to it at clock-in. Lateness threshold is 5 minutes after startTime.
-router.get('/attendance', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/attendance', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end required' });
 
@@ -250,7 +250,7 @@ router.get('/attendance', authenticate, requireRole('OWNER', 'MANAGER'), async (
 // Payroll CSV: aggregate TimeEntry rows by user × ISO-week, split regular / OT
 // at 40h, derive a weighted hourly rate from the worked shifts' positions, and
 // return a plain text/csv stream the gestoría can feed into ADP/Gusto/Paychex.
-router.get('/payroll', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/payroll', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end required' });
 
@@ -401,7 +401,7 @@ router.get('/payroll', authenticate, requireRole('OWNER', 'MANAGER'), async (req
   res.send(csv);
 });
 
-router.get('/attendance-points', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/attendance-points', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const result = await computePoints(req.user.organizationId);
   res.json(result);
 });
@@ -428,7 +428,7 @@ router.get('/my-attendance', authenticate, async (req, res) => {
 // date and is under 18, return any shifts in the range that violate the
 // under-18 rule set in lib/minorRules.js.  Adults and users without a DOB
 // are silently skipped — nothing to check.
-router.get('/minor-compliance', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/minor-compliance', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end required' });
 

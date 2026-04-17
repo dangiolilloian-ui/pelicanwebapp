@@ -34,7 +34,7 @@ export default function TimeOffPage() {
   const [balance, setBalance] = useState<PtoBalance | null>(null);
   const [actionError, setActionError] = useState('');
   const [formError, setFormError] = useState('');
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const t = useT();
 
   const fetch = useCallback(async () => {

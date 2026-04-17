@@ -13,7 +13,7 @@ import clsx from 'clsx';
 export default function TeamPage() {
   const { members, loading, addMember, removeMember, updateMember, generateResetLink } = useTeam();
   const { user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: 'EMPLOYEE' });
   const [error, setError] = useState('');
@@ -90,6 +90,7 @@ export default function TeamPage() {
   const roleBadge = (role: string) => {
     const colors: Record<string, string> = {
       OWNER: 'bg-purple-100 text-purple-700',
+      ADMIN: 'bg-indigo-100 text-indigo-700',
       MANAGER: 'bg-blue-100 text-blue-700',
       EMPLOYEE: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300',
     };
@@ -148,6 +149,7 @@ export default function TeamPage() {
             >
               <option value="EMPLOYEE">{t('team.roleEmployee')}</option>
               <option value="MANAGER">{t('team.roleManager')}</option>
+              <option value="ADMIN">Admin</option>
             </select>
           </div>
           <button

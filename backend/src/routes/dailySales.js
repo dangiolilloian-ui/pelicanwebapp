@@ -17,7 +17,7 @@ function parseDate(s) {
 // GET /api/sales?start=YYYY-MM-DD&end=YYYY-MM-DD&locationId=...
 // Lists sales rows in a range. Managers only — sales totals are sensitive
 // and not something every cashier needs to see.
-router.get('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { start, end, locationId } = req.query;
   const where = { organizationId: req.user.organizationId };
 
@@ -45,7 +45,7 @@ router.get('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) 
 // POST /api/sales — upsert (locationId, date).  Re-submitting the same
 // day just overwrites — managers typically enter the number once at close
 // but edit it when the drawer count comes in a few minutes later.
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { locationId, date, amount, notes } = req.body;
 
   const parsed = parseDate(date);
@@ -83,7 +83,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(row);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.dailySales.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });

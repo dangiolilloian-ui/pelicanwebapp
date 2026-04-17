@@ -39,7 +39,7 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export default function SettingsPage() {
   const { token, user } = useAuth();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
 
   const [positions, setPositions] = useState<Position[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);

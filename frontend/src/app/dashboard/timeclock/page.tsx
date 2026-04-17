@@ -29,7 +29,7 @@ function formatDuration(ms: number): string {
 export default function TimeClockPage() {
   const { token, user } = useAuth();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [active, setActive] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);

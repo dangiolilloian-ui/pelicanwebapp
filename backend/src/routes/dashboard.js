@@ -172,7 +172,7 @@ router.get('/me', authenticate, async (req, res) => {
 // swiping in a moment late), so we apply the same 5-min grace we use for
 // attendance lateness elsewhere in the app.
 const { requireRole } = require('../middleware/auth');
-router.get('/live-roster', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const orgId = req.user.organizationId;
   const now = new Date();
   const GRACE_MS = 5 * 60 * 1000;
@@ -262,7 +262,7 @@ router.get('/live-roster', authenticate, requireRole('OWNER', 'MANAGER'), async 
 // 10am to see "how's today shaping up". Everything is computed in local
 // server time, which is fine for a single-region org; if we ever ship
 // multi-TZ orgs we'll revisit via Organization.timezone.
-router.get('/today', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/today', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const orgId = req.user.organizationId;
   const now = new Date();
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());

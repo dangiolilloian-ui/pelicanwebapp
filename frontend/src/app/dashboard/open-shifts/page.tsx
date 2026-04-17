@@ -37,7 +37,7 @@ function hoursBetween(start: string, end: string) {
 
 export default function OpenShiftsPage() {
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const t = useT();
   const [shifts, setShifts] = useState<OpenShift[]>([]);
   const [loading, setLoading] = useState(true);

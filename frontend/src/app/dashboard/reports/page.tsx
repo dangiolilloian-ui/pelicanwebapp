@@ -55,7 +55,7 @@ export default function ReportsPage() {
   const { token, user } = useAuth();
   const { locations } = useLocations();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [start, setStart] = useState(() => toDateInputValue(getWeekStart(new Date())));
   const [end, setEnd] = useState(() => toDateInputValue(addDays(getWeekStart(new Date()), 6)));
   const [data, setData] = useState<Report | null>(null);

@@ -33,7 +33,7 @@ const sevColor: Record<string, string> = {
 
 export default function IncidentsPage() {
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const { locations } = useLocations();
   const t = useT();
   const [incidents, setIncidents] = useState<Incident[]>([]);

@@ -19,7 +19,7 @@ const parseBudget = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, address, latitude, longitude, radiusMeters, weeklyBudget } = req.body;
   const location = await prisma.location.create({
     data: {
@@ -35,7 +35,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(location);
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, address, latitude, longitude, radiusMeters, weeklyBudget } = req.body;
   const budget = parseBudget(weeklyBudget);
   const location = await prisma.location.update({
@@ -58,7 +58,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(location);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   await prisma.location.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });

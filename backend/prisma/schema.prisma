@@ -86,6 +86,7 @@ model User {
 
 enum Role {
   OWNER
+  ADMIN
   MANAGER
   EMPLOYEE
 }

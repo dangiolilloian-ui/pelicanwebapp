@@ -52,7 +52,7 @@ router.get('/', authenticate, async (req, res) => {
   res.json(await hydrate(rules, req.user.organizationId));
 });
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const {
     userId, positionId, locationId,
     dayOfWeek, startTime, endTime,
@@ -79,7 +79,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(hydrated);
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const {
     userId, positionId, locationId,
     dayOfWeek, startTime, endTime,
@@ -104,7 +104,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(hydrated);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   await prisma.recurringShift.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });
@@ -112,7 +112,7 @@ router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req,
 // Materialize active rules into DRAFT shifts for a given week. Returns the
 // count of created shifts and a list of skipped rules (already a shift
 // exists for that user/day/time, or rule inactive for that date).
-router.post('/materialize', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/materialize', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { weekStart } = req.body;
   if (!weekStart) return res.status(400).json({ error: 'weekStart required' });
 

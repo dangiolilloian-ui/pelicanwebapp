@@ -51,7 +51,7 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
   const [saving, setSaving] = useState(false);
   const { templates } = useTemplates();
   const { token, user: authUser } = useAuth();
-  const isManager = authUser?.role === 'OWNER' || authUser?.role === 'MANAGER';
+  const isManager = authUser?.role === 'OWNER' || authUser?.role === 'ADMIN' || authUser?.role === 'MANAGER';
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
 

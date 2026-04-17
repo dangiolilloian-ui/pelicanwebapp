@@ -8,7 +8,7 @@ const router = Router();
 
 // All endpoints here are manager-level. Employees don't need to know the
 // coverage policy and the gap report is sensitive scheduling info.
-router.use(authenticate, requireRole('OWNER', 'MANAGER'));
+router.use(authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'));
 
 // GET /coverage/requirements — list org requirements
 router.get('/requirements', async (req, res) => {

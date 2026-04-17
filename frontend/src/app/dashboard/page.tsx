@@ -56,7 +56,7 @@ interface MyStats {
 export default function OverviewPage() {
   const { token, user } = useAuth();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [stats, setStats] = useState<Stats | null>(null);
   const [mine, setMine] = useState<MyStats | null>(null);
 

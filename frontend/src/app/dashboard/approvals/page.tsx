@@ -63,7 +63,7 @@ const fmtRange = (start: string, end: string) => {
 
 export default function ApprovalsPage() {
   const { token, user } = useAuth();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
 
   const [data, setData] = useState<ApprovalsPayload | null>(null);
   const [loading, setLoading] = useState(true);

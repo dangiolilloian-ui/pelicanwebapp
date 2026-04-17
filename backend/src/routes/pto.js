@@ -120,7 +120,7 @@ router.get('/ledger', authenticate, async (req, res) => {
 });
 
 // POST /pto/adjust — manager-only. Body: { userId, delta, reason }.
-router.post('/adjust', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/adjust', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { userId, delta, reason } = req.body;
   const d = Number(delta);
   if (!userId || !Number.isFinite(d) || d === 0) {

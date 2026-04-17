@@ -16,7 +16,7 @@ router.get('/', authenticate, async (req, res) => {
   res.json(templates);
 });
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, locationId, items } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
 
@@ -38,7 +38,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(tpl);
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.checklistTemplate.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Template not found' });
@@ -55,7 +55,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(tpl);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.checklistTemplate.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Template not found' });
@@ -65,7 +65,7 @@ router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req,
 });
 
 // Add an item to a template.
-router.post('/:id/items', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/:id/items', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const tpl = await prisma.checklistTemplate.findUnique({
     where: { id: req.params.id },
     include: { items: { select: { position: true } } },
@@ -83,7 +83,7 @@ router.post('/:id/items', authenticate, requireRole('OWNER', 'MANAGER'), async (
   res.status(201).json(item);
 });
 
-router.delete('/:id/items/:itemId', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id/items/:itemId', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const item = await prisma.checklistItem.findUnique({
     where: { id: req.params.itemId },
     include: { template: { select: { id: true, organizationId: true } } },

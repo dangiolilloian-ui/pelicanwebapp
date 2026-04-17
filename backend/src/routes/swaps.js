@@ -129,7 +129,7 @@ router.post('/:id/accept', authenticate, async (req, res) => {
 });
 
 // Manager approves or denies
-router.post('/:id/approve', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/:id/approve', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const swap = await prisma.shiftSwap.findUnique({ where: { id: req.params.id }, include: includeAll });
   if (!swap) return res.status(404).json({ error: 'Not found' });
   if (swap.status !== 'ACCEPTED') return res.status(400).json({ error: 'Must be accepted first' });
@@ -163,7 +163,7 @@ router.post('/:id/approve', authenticate, requireRole('OWNER', 'MANAGER'), async
   res.json(updated);
 });
 
-router.post('/:id/deny', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/:id/deny', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const swap = await prisma.shiftSwap.findUnique({ where: { id: req.params.id } });
   if (!swap) return res.status(404).json({ error: 'Not found' });
   const updated = await prisma.shiftSwap.update({

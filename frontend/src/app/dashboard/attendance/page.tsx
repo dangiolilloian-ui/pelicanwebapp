@@ -47,7 +47,7 @@ const statusBadge: Record<string, string> = {
 export default function AttendancePage() {
   const { token, user } = useAuth();
   const t = useT();
-  const isManager = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
 
   return (
     <div className="p-6 max-w-5xl">

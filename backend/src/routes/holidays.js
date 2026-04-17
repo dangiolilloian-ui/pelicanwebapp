@@ -35,7 +35,7 @@ router.get('/', authenticate, async (req, res) => {
   res.json(holidays);
 });
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { date, name, multiplier } = req.body;
   const parsed = parseDate(date);
   if (!parsed) return res.status(400).json({ error: 'Valid date (YYYY-MM-DD) required' });
@@ -62,7 +62,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   }
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.holiday.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });
@@ -96,7 +96,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   }
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const existing = await prisma.holiday.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });

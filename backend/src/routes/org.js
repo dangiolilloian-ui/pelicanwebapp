@@ -9,7 +9,7 @@ const router = Router();
 
 // GET /api/org/attendance-config — returns the effective config (defaults
 // merged with overrides) plus the raw overrides for the editor.
-router.get('/attendance-config', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/attendance-config', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const org = await prisma.organization.findUnique({
     where: { id: req.user.organizationId },
     select: { attendanceConfig: true },
@@ -48,7 +48,7 @@ router.put('/attendance-config', authenticate, requireRole('OWNER'), async (req,
 
 // GET /api/org/invite-code — returns the current invite code for this org.
 // Generates one on the fly if none exists yet.
-router.get('/invite-code', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.get('/invite-code', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   let org = await prisma.organization.findUnique({
     where: { id: req.user.organizationId },
     select: { inviteCode: true, name: true },
@@ -66,7 +66,7 @@ router.get('/invite-code', authenticate, requireRole('OWNER', 'MANAGER'), async 
 
 // POST /api/org/invite-code/regenerate — invalidates the old code and creates
 // a fresh one. Anyone with the old link won't be able to join anymore.
-router.post('/invite-code/regenerate', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/invite-code/regenerate', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const code = crypto.randomBytes(6).toString('hex');
   const org = await prisma.organization.update({
     where: { id: req.user.organizationId },

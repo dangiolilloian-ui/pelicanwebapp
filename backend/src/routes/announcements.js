@@ -96,7 +96,7 @@ router.post('/:id/ack', authenticate, async (req, res) => {
   res.status(204).end();
 });
 
-router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { title, body, pinned, expiresAt } = req.body;
   if (!title || !body) {
     return res.status(400).json({ error: 'title and body required' });
@@ -131,7 +131,7 @@ router.post('/', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res)
   res.status(201).json(ann);
 });
 
-router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { title, body, pinned, expiresAt } = req.body;
   const ann = await prisma.announcement.update({
     where: { id: req.params.id },
@@ -145,7 +145,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, re
   res.json(ann);
 });
 
-router.delete('/:id', authenticate, requireRole('OWNER', 'MANAGER'), async (req, res) => {
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   await prisma.announcement.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });
