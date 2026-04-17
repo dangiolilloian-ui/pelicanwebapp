@@ -140,7 +140,7 @@ router.get('/', authenticate, async (req, res) => {
 
 // ─── Create conversation ────────────────────────────────────────────
 
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, requireRole('MANAGER', 'OWNER'), async (req, res) => {
   const { type, name, memberIds, filters } = req.body;
 
   // Validate type

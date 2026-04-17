@@ -309,12 +309,14 @@ export default function MessagesPage() {
       <div className="w-80 border-r border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-900">
         <div className="p-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Messages</h2>
-          <button
-            onClick={openNewModal}
-            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
-          >
-            New
-          </button>
+          {(user?.role === 'MANAGER' || user?.role === 'OWNER') && (
+            <button
+              onClick={openNewModal}
+              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              New
+            </button>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto">
           {conversations.length === 0 && (
