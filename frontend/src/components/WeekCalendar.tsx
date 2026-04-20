@@ -38,6 +38,7 @@ interface DragData {
   shiftId: string;
   sourceUserId: string | null;
   sourceDate: string;
+  isCopy: boolean;
 }
 
 export function WeekCalendar({
@@ -73,6 +74,7 @@ export function WeekCalendar({
   const [modal, setModal] = useState<{ shift?: Shift; date?: Date; userId?: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const dragDataRef = useRef<DragData | null>(null);
+  const [isDraggingCopy, setIsDraggingCopy] = useState(false);
   // Empty-cell quick-add popover. Managers with templates defined can drop a
   // shift in one click instead of tabbing through the full modal.
   const [quickAdd, setQuickAdd] = useState<{ cellKey: string; date: Date; userId?: string } | null>(null);
@@ -188,51 +190,71 @@ export function WeekCalendar({
     });
 
   // Drag handlers
+  
   const handleDragStart = (e: React.DragEvent, shift: Shift, day: Date) => {
-    dragDataRef.current = {
-      shiftId: shift.id,
-      sourceUserId: shift.user?.id || null,
-      sourceDate: day.toISOString(),
-    };
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', shift.id);
+  const isCopy = e.ctrlKey || e.metaKey;
+  dragDataRef.current = {
+    shiftId: shift.id,
+    sourceUserId: shift.user?.id || null,
+    sourceDate: day.toISOString(),
+    isCopy,
   };
+  setIsDraggingCopy(isCopy);
+  e.dataTransfer.effectAllowed = isCopy ? 'copy' : 'move';
+  e.dataTransfer.setData('text/plain', shift.id);
+};
 
-  const handleDragOver = (e: React.DragEvent, cellKey: string) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOver(cellKey);
-  };
+const handleDragEnd = () => {
+  setIsDraggingCopy(false);
+};
 
-  const handleDragLeave = () => setDragOver(null);
+const handleDragOver = (e: React.DragEvent, cellKey: string) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = dragDataRef.current?.isCopy ? 'copy' : 'move';
+  setDragOver(cellKey);
+};
 
-  const handleDrop = async (e: React.DragEvent, targetUserId: string, targetDay: Date) => {
-    e.preventDefault();
-    setDragOver(null);
-    const drag = dragDataRef.current;
-    if (!drag) return;
-    dragDataRef.current = null;
+const handleDragLeave = () => setDragOver(null);
 
-    const shift = shifts.find((s) => s.id === drag.shiftId);
-    if (!shift) return;
+const handleDrop = async (e: React.DragEvent, targetUserId: string, targetDay: Date) => {
+  e.preventDefault();
+  setDragOver(null);
+  setIsDraggingCopy(false);
+  const drag = dragDataRef.current;
+  if (!drag) return;
+  dragDataRef.current = null;
 
-    const oldStart = new Date(shift.startTime);
-    const oldEnd = new Date(shift.endTime);
-    const duration = oldEnd.getTime() - oldStart.getTime();
+  const shift = shifts.find((s) => s.id === drag.shiftId);
+  if (!shift) return;
 
-    // Build new start preserving the time of day
-    const newStart = new Date(targetDay);
-    newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
-    const newEnd = new Date(newStart.getTime() + duration);
+  const oldStart = new Date(shift.startTime);
+  const oldEnd = new Date(shift.endTime);
+  const duration = oldEnd.getTime() - oldStart.getTime();
 
-    const newUserId = targetUserId === '__unassigned__' ? null : targetUserId;
+  const newStart = new Date(targetDay);
+  newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+  const newEnd = new Date(newStart.getTime() + duration);
 
+  const newUserId = targetUserId === '__unassigned__' ? null : targetUserId;
+
+  if (drag.isCopy) {
+    await onCreateShift({
+      startTime: newStart.toISOString(),
+      endTime: newEnd.toISOString(),
+      userId: newUserId,
+      positionId: shift.position?.id ?? null,
+      locationId: shift.location?.id ?? null,
+      notes: shift.notes ?? null,
+      status: 'DRAFT',
+    });
+  } else {
     await onUpdateShift(drag.shiftId, {
       startTime: newStart.toISOString(),
       endTime: newEnd.toISOString(),
       userId: newUserId,
     });
-  };
+  }
+};
 
   return (
     <div>
@@ -341,7 +363,12 @@ export function WeekCalendar({
           </button>
         </div>
       </div>
-
+{isDraggingCopy && (
+  <div className="mb-2 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
+    <span>📋</span>
+    <span>Copy mode — drop on any cell to duplicate this shift there</span>
+  </div>
+)}
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('schedule.filters')}</span>
@@ -401,7 +428,10 @@ export function WeekCalendar({
           </div>
         )}
       </div>
-
+<div className="mb-3 text-[11px] text-gray-400 dark:text-gray-500 flex items-center gap-1">
+  <span>💡</span>
+  <span>Hold <kbd className="rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 px-1 py-0.5 font-mono text-[10px]">Ctrl</kbd> (or <kbd className="rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 px-1 py-0.5 font-mono text-[10px]">⌘</kbd> on Mac) while dragging a shift to copy it to another day or employee.</span>
+</div>
       {/* Sling-style Grid: employees as rows, days as columns */}
       <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-x-auto bg-white dark:bg-gray-900">
         <div className="min-w-[900px]">
@@ -500,7 +530,8 @@ export function WeekCalendar({
                       !holidayName && status === 'unavailable' && 'bg-red-50/60 dark:bg-red-900/10',
                       !holidayName && status === 'available' && 'bg-green-50/40 dark:bg-green-900/10',
                       // Drag-over feedback overrides base tint
-                      !holidayName && isOver && !dropConflict && 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset',
+                      !holidayName && isOver && !dropConflict && isDraggingCopy && 'bg-emerald-50 ring-2 ring-emerald-400 ring-inset',
+!holidayName && isOver && !dropConflict && !isDraggingCopy && 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset',
                       !holidayName && dropConflict && 'bg-red-100 ring-2 ring-red-400 ring-inset'
                     )}
                     onDragOver={(e) => !holidayName && handleDragOver(e, cellKey)}
@@ -539,6 +570,7 @@ export function WeekCalendar({
                         key={shift.id}
                         draggable={!selectMode}
                         onDragStart={(e) => handleDragStart(e, shift, day)}
+                        onDragEnd={handleDragEnd}
                         onClick={(e) => {
                           e.stopPropagation();
                           if (selectMode) toggleSelected(shift.id);
