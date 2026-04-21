@@ -68,7 +68,8 @@ export function NotificationsSection() {
       } else if ((r as any).subscriptions === 0) {
         setFlash('No push subscriptions found for your account. Try disabling and re-enabling.');
       } else {
-        setFlash(`Found ${(r as any).subscriptions} subscription(s) but sending failed (${r.pruned} pruned). Try re-enabling.`);
+        const errs = (r as any).errors?.join('; ') || 'unknown error';
+        setFlash(`Push failed: ${errs}`);
       }
     } catch (err: any) {
       setFlash(err?.message || t('pushNotifications.testFailed'));

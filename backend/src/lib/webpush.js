@@ -35,9 +35,8 @@ async function pushToUser(userId, payload) {
   const body = JSON.stringify(payload);
   let sent = 0;
   const toDelete = [];
+  const errors = [];
 
-  // Send in parallel but isolate failures — one dead subscription must not
-  // block delivery to the user's other devices.
   await Promise.all(
     subs.map(async (s) => {
       try {
@@ -50,13 +49,12 @@ async function pushToUser(userId, payload) {
         );
         sent++;
       } catch (err) {
-        // 404 / 410 mean the subscription is dead — prune it so we don't
-        // keep hammering a nonexistent endpoint.  Anything else we just
-        // log; transient errors will retry on the next push.
         if (err.statusCode === 404 || err.statusCode === 410) {
           toDelete.push(s.id);
         } else {
-          console.warn(`[push] send failed (${err.statusCode || err.code}):`, err.body || err.message);
+          const errMsg = `${err.statusCode || err.code}: ${err.body || err.message}`;
+          console.warn(`[push] send failed:`, errMsg);
+          errors.push(errMsg);
         }
       }
     })
@@ -66,7 +64,7 @@ async function pushToUser(userId, payload) {
     await prisma.pushSubscription.deleteMany({ where: { id: { in: toDelete } } });
   }
 
-  return { sent, pruned: toDelete.length };
+  return { sent, pruned: toDelete.length, errors };
 }
 
 async function pushToUsers(userIds, payload) {
