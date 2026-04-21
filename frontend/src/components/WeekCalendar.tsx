@@ -10,8 +10,10 @@ import { detectConflicts } from '@/lib/conflicts';
 import { getCellStatus, type CellStatus } from '@/lib/availability';
 import type { AvailabilityEntry, TimeOffEntry } from '@/hooks/useAvailability';
 import { useT } from '@/lib/i18n';
+import { useAuth } from '@/lib/auth';
 import clsx from 'clsx';
 import { SearchableSelect } from './SearchableSelect';
+import { exportScheduleXlsx } from '@/lib/exportXlsx';
 
 interface WeekCalendarProps {
   weekStart: Date;
@@ -64,6 +66,7 @@ export function WeekCalendar({
   holidays = new Map(),
 }: WeekCalendarProps) {
   const t = useT();
+  const { token: authToken } = useAuth();
   const days = getWeekDays(weekStart);
 
   // Holiday lookup helper
@@ -138,6 +141,8 @@ export function WeekCalendar({
     });
   };
   const clearSelection = () => setSelected(new Set());
+
+  const [exporting, setExporting] = useState(false);
 
   // Toast / warnings
   const [toast, setToast] = useState<{ kind: 'warn' | 'info'; lines: string[] } | null>(null);
@@ -307,6 +312,34 @@ export function WeekCalendar({
             title={t('schedule.exportCsvTitle')}
           >
             {t('schedule.exportCsv')}
+          </button>
+          <button
+            onClick={async () => {
+              if (!authToken || exporting) return;
+              setExporting(true);
+              try {
+                await exportScheduleXlsx({
+                  weekStart,
+                  token: authToken,
+                  members,
+                  positions,
+                  locations,
+                  filterUser,
+                  filterPosition,
+                  filterLocation,
+                });
+              } catch (err) {
+                console.error('Export failed', err);
+                showToast('warn', ['Excel export failed — please try again.']);
+              } finally {
+                setExporting(false);
+              }
+            }}
+            disabled={exporting}
+            className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-50"
+            title="Export 3-week schedule to Excel (printable)"
+          >
+            {exporting ? 'Exporting…' : '📋 3-Week Excel'}
           </button>
           <button
             onClick={() => {

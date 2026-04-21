@@ -41,12 +41,36 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
     return toDateInputValue(new Date());
   };
 
+  // Auto-fill position & location from a member's assignments when they have
+  // exactly one of each; leave blank if they have multiple (let the manager pick).
+  const autoFillFromMember = (memberId: string) => {
+    const m = members.find((x) => x.id === memberId);
+    if (!m) return { pos: '', loc: '' };
+    const pos = m.positions?.length === 1 ? m.positions[0].id : '';
+    const loc = m.locations?.length === 1 ? m.locations[0].id : '';
+    return { pos, loc };
+  };
+
+  const initialUserId = shift?.user?.id || defaultUserId || '';
+  const initialAuto = !isEdit && initialUserId ? autoFillFromMember(initialUserId) : { pos: '', loc: '' };
+
   const [date, setDate] = useState(getInitialDate);
-  const [startTime, setStartTime] = useState(shift ? new Date(shift.startTime).toTimeString().slice(0, 5) : '09:00');
-  const [endTime, setEndTime] = useState(shift ? new Date(shift.endTime).toTimeString().slice(0, 5) : '17:00');
-  const [userId, setUserId] = useState(shift?.user?.id || defaultUserId || '');
-  const [positionId, setPositionId] = useState(shift?.position?.id || '');
-  const [locationId, setLocationId] = useState(shift?.location?.id || '');
+  const [startTime, setStartTime] = useState(shift ? new Date(shift.startTime).toTimeString().slice(0, 5) : '10:00');
+  const [endTime, setEndTime] = useState(shift ? new Date(shift.endTime).toTimeString().slice(0, 5) : '18:00');
+  const [userId, setUserId] = useState(initialUserId);
+  const [positionId, setPositionId] = useState(shift?.position?.id || initialAuto.pos);
+  const [locationId, setLocationId] = useState(shift?.location?.id || initialAuto.loc);
+
+  // When the user changes the assigned employee on a new shift, auto-fill
+  // position & location if they have exactly one of each.
+  const handleUserChange = (newUserId: string) => {
+    setUserId(newUserId);
+    if (!isEdit && newUserId) {
+      const { pos, loc } = autoFillFromMember(newUserId);
+      if (pos) setPositionId(pos);
+      if (loc) setLocationId(loc);
+    }
+  };
   const [notes, setNotes] = useState(shift?.notes || '');
   const [saving, setSaving] = useState(false);
   const { templates } = useTemplates();
@@ -172,7 +196,7 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('shiftModal.assignTo')}</label>
             <select
               value={userId}
-              onChange={(e) => setUserId(e.target.value)}
+              onChange={(e) => handleUserChange(e.target.value)}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">{t('common.unassigned')}</option>
