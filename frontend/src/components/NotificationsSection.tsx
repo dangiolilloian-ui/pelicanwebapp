@@ -63,7 +63,13 @@ export function NotificationsSection() {
     setFlash(null);
     try {
       const r = await sendTestPush(token);
-      setFlash(r.sent > 0 ? t('pushNotifications.testSent', { n: r.sent }) : t('pushNotifications.noDevices'));
+      if (r.sent > 0) {
+        setFlash(t('pushNotifications.testSent', { n: r.sent }));
+      } else if ((r as any).subscriptions === 0) {
+        setFlash('No push subscriptions found for your account. Try disabling and re-enabling.');
+      } else {
+        setFlash(`Found ${(r as any).subscriptions} subscription(s) but sending failed (${r.pruned} pruned). Try re-enabling.`);
+      }
     } catch (err: any) {
       setFlash(err?.message || t('pushNotifications.testFailed'));
     } finally {

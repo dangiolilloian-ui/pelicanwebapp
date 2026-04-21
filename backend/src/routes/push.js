@@ -62,13 +62,15 @@ router.post('/unsubscribe', authenticate, async (req, res) => {
 // Manual test button — fires a push to the current user so they can verify
 // end-to-end without waiting for a real shift-publish event.
 router.post('/test', authenticate, async (req, res) => {
+  // Count subscriptions before sending so we can diagnose issues
+  const subCount = await prisma.pushSubscription.count({ where: { userId: req.user.id } });
   const result = await pushToUser(req.user.id, {
     type: 'TEST',
     title: 'Pelican test notification',
     body: 'If you can see this, push is working.',
     link: '/dashboard/today',
   });
-  res.json(result);
+  res.json({ ...result, subscriptions: subCount });
 });
 
 module.exports = router;
