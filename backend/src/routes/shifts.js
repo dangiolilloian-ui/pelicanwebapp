@@ -143,6 +143,58 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
   await audit(req, 'SHIFT_UPDATE', 'SHIFT', shift.id,
     `Updated shift ${shift.id.slice(0,8)}`,
     { before, after: { userId: shift.userId, startTime: shift.startTime, endTime: shift.endTime, status: shift.status } });
+
+  // ── Notify affected employees about the change ──────────────────
+  const managerName = `${req.user.firstName} ${req.user.lastName}`;
+  const shiftDate = new Date(shift.startTime).toLocaleDateString();
+  const shiftTime = `${new Date(shift.startTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} – ${new Date(shift.endTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+
+  // If the shift was reassigned to a different person
+  if (before.userId && shift.userId && before.userId !== shift.userId) {
+    // Notify the old employee their shift was removed
+    await notify(before.userId, {
+      type: 'SHIFT_UPDATED',
+      title: 'Shift removed',
+      body: `${managerName} removed your shift on ${shiftDate}.`,
+      link: '/dashboard/schedule',
+    });
+    // Notify the new employee they were assigned
+    await notify(shift.userId, {
+      type: 'SHIFT_UPDATED',
+      title: 'New shift assigned',
+      body: `${managerName} assigned you a shift on ${shiftDate} (${shiftTime}).`,
+      link: '/dashboard/schedule',
+    });
+  } else if (!before.userId && shift.userId) {
+    // Shift was unassigned, now assigned to someone
+    await notify(shift.userId, {
+      type: 'SHIFT_UPDATED',
+      title: 'New shift assigned',
+      body: `${managerName} assigned you a shift on ${shiftDate} (${shiftTime}).`,
+      link: '/dashboard/schedule',
+    });
+  } else if (before.userId && !shift.userId) {
+    // Shift was assigned, now unassigned
+    await notify(before.userId, {
+      type: 'SHIFT_UPDATED',
+      title: 'Shift removed',
+      body: `${managerName} removed your shift on ${shiftDate}.`,
+      link: '/dashboard/schedule',
+    });
+  } else if (shift.userId) {
+    // Same person, but time or status changed
+    const timeChanged = before.startTime?.getTime() !== shift.startTime.getTime() ||
+                        before.endTime?.getTime() !== shift.endTime.getTime();
+    if (timeChanged) {
+      await notify(shift.userId, {
+        type: 'SHIFT_UPDATED',
+        title: 'Shift time changed',
+        body: `${managerName} updated your shift to ${shiftDate} (${shiftTime}).`,
+        link: '/dashboard/schedule',
+      });
+    }
+  }
+
   res.json({ ...shift, _warnings: [...avail, ...ot] });
 });
 
