@@ -202,6 +202,8 @@ model Announcement {
   id             String    @id @default(uuid())
   organizationId String    @map("organization_id")
   authorId       String    @map("author_id")
+  locationId     String?   @map("location_id")
+  positionId     String?   @map("position_id")
   title          String
   body           String
   pinned         Boolean   @default(true)
@@ -212,6 +214,8 @@ model Announcement {
   acks         AnnouncementAck[]
 
   @@index([organizationId, pinned])
+  @@index([locationId])
+  @@index([positionId])
   @@map("announcements")
 }
 

@@ -2,39 +2,96 @@ const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { notifyMany } = require('../lib/notify');
+const { getUserLocationIds } = require('../lib/locationAccess');
 
 const router = Router();
 
-// List announcements for the org. Employees only see pinned + non-expired
-// ones; managers see everything for admin purposes.
+// Hydrate author + location + position labels onto each announcement.
+async function hydrate(rows, organizationId) {
+  const authorIds = [...new Set(rows.map((r) => r.authorId))];
+  const locIds = [...new Set(rows.map((r) => r.locationId).filter(Boolean))];
+  const posIds = [...new Set(rows.map((r) => r.positionId).filter(Boolean))];
+
+  const [authors, locations, positions] = await Promise.all([
+    authorIds.length
+      ? prisma.user.findMany({
+          where: { id: { in: authorIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [],
+    locIds.length
+      ? prisma.location.findMany({
+          where: { id: { in: locIds }, organizationId },
+          select: { id: true, name: true },
+        })
+      : [],
+    posIds.length
+      ? prisma.position.findMany({
+          where: { id: { in: posIds }, organizationId },
+          select: { id: true, name: true },
+        })
+      : [],
+  ]);
+
+  const aMap = new Map(authors.map((a) => [a.id, a]));
+  const lMap = new Map(locations.map((l) => [l.id, l]));
+  const pMap = new Map(positions.map((p) => [p.id, p]));
+
+  return rows.map((r) => ({
+    ...r,
+    author: aMap.get(r.authorId) || null,
+    location: r.locationId ? lMap.get(r.locationId) || null : null,
+    position: r.positionId ? pMap.get(r.positionId) || null : null,
+  }));
+}
+
+// Determine which announcements a user should see based on their location
+// and position assignments.
+function filterForUser(rows, userLocationIds, userPositionIds) {
+  return rows.filter((r) => {
+    // Org-wide (no targeting) — everyone sees it
+    if (!r.locationId && !r.positionId) return true;
+    // Location-targeted
+    if (r.locationId && !userLocationIds.includes(r.locationId)) return false;
+    // Position-targeted
+    if (r.positionId && !userPositionIds.includes(r.positionId)) return false;
+    return true;
+  });
+}
+
 router.get('/', authenticate, async (req, res) => {
   const now = new Date();
-  const isManager = req.user.role === 'OWNER' || req.user.role === 'MANAGER';
+  const isManager = ['OWNER', 'ADMIN', 'MANAGER'].includes(req.user.role);
   const where = { organizationId: req.user.organizationId };
+
   if (!isManager) {
     where.pinned = true;
     where.OR = [{ expiresAt: null }, { expiresAt: { gte: now } }];
   }
+
   const rows = await prisma.announcement.findMany({
     where,
     orderBy: { createdAt: 'desc' },
   });
-  // Hydrate author labels manually (no FK relation to User to keep the model
-  // survivable when a manager leaves the org).
-  const authorIds = [...new Set(rows.map((r) => r.authorId))];
-  const authors = authorIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: authorIds } },
-        select: { id: true, firstName: true, lastName: true },
-      })
-    : [];
-  const aMap = new Map(authors.map((a) => [a.id, a]));
 
-  // Acknowledgement counts + per-user ack state. We always return
-  // `ackedByMe` so the employee card knows whether to show "Got it" or
-  // the green check. Managers additionally get `ackCount` + `totalAudience`
-  // to render a read-through pill on each card.
-  const ids = rows.map((r) => r.id);
+  // Scope visibility: non-owners only see announcements for their locations
+  // and positions (plus org-wide ones with no targeting).
+  let visible = rows;
+  if (!isManager) {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        locations: { select: { id: true } },
+        positions: { select: { id: true } },
+      },
+    });
+    const userLocIds = dbUser?.locations.map((l) => l.id) || [];
+    const userPosIds = dbUser?.positions.map((p) => p.id) || [];
+    visible = filterForUser(rows, userLocIds, userPosIds);
+  }
+
+  // Ack counts + per-user state
+  const ids = visible.map((r) => r.id);
   const acks = ids.length
     ? await prisma.announcementAck.findMany({
         where: { announcementId: { in: ids } },
@@ -47,17 +104,18 @@ router.get('/', authenticate, async (req, res) => {
     ackCountMap.set(a.announcementId, (ackCountMap.get(a.announcementId) || 0) + 1);
     if (a.userId === req.user.id) ackedByMe.add(a.announcementId);
   }
-  // Audience = everyone in the org except the author (author doesn't need
-  // to ack their own post). Approximate as orgUsers-1 to avoid an extra
-  // query per announcement; close enough for a progress pill.
+
+  // Audience count — for targeted announcements, count users at that
+  // location/position; for org-wide, count all org users minus author.
   const orgUserCount = await prisma.user.count({
     where: { organizationId: req.user.organizationId },
   });
 
+  const hydrated = await hydrate(visible, req.user.organizationId);
+
   res.json(
-    rows.map((r) => ({
+    hydrated.map((r) => ({
       ...r,
-      author: aMap.get(r.authorId) || null,
       ackCount: ackCountMap.get(r.id) || 0,
       totalAudience: Math.max(0, orgUserCount - 1),
       ackedByMe: ackedByMe.has(r.id),
@@ -65,8 +123,7 @@ router.get('/', authenticate, async (req, res) => {
   );
 });
 
-// Employee taps "Got it" to acknowledge. Idempotent — tapping twice is a
-// no-op thanks to the unique (announcementId, userId) constraint.
+// Employee taps "Got it" to acknowledge.
 router.post('/:id/ack', authenticate, async (req, res) => {
   const ann = await prisma.announcement.findUnique({
     where: { id: req.params.id },
@@ -75,8 +132,6 @@ router.post('/:id/ack', authenticate, async (req, res) => {
   if (!ann || ann.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'Not found' });
   }
-  // Authors acking their own post is silly but harmless; we block it so
-  // ack counts reflect actual reach.
   if (ann.authorId === req.user.id) {
     return res.status(400).json({ error: 'Cannot ack your own announcement' });
   }
@@ -97,7 +152,7 @@ router.post('/:id/ack', authenticate, async (req, res) => {
 });
 
 router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
-  const { title, body, pinned, expiresAt } = req.body;
+  const { title, body, pinned, expiresAt, locationId, positionId } = req.body;
   if (!title || !body) {
     return res.status(400).json({ error: 'title and body required' });
   }
@@ -109,30 +164,44 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
       body,
       pinned: pinned !== false,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
+      locationId: locationId || null,
+      positionId: positionId || null,
     },
   });
 
-  // Notify everyone in the org (except the author) — reuses the in-app bell
-  // system. Once we add Web Push this automatically becomes a real push.
+  // Build recipient list based on targeting
+  let recipientWhere = {
+    organizationId: req.user.organizationId,
+    id: { not: req.user.id },
+  };
+
+  // If location-targeted, only notify users at that location
+  if (locationId) {
+    recipientWhere.locations = { some: { id: locationId } };
+  }
+  // If position-targeted, only notify users with that position
+  if (positionId) {
+    recipientWhere.positions = { some: { id: positionId } };
+  }
+
   const recipients = await prisma.user.findMany({
-    where: {
-      organizationId: req.user.organizationId,
-      id: { not: req.user.id },
-    },
+    where: recipientWhere,
     select: { id: true },
   });
+
   await notifyMany(recipients.map((r) => r.id), {
     type: 'ANNOUNCEMENT',
     title: `📢 ${title}`,
     body: body.length > 140 ? body.slice(0, 137) + '...' : body,
-    link: '/dashboard',
+    link: '/dashboard/announcements',
   });
 
-  res.status(201).json(ann);
+  const [hydrated] = await hydrate([ann], req.user.organizationId);
+  res.status(201).json(hydrated);
 });
 
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
-  const { title, body, pinned, expiresAt } = req.body;
+  const { title, body, pinned, expiresAt, locationId, positionId } = req.body;
   const ann = await prisma.announcement.update({
     where: { id: req.params.id },
     data: {
@@ -140,9 +209,12 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
       ...(body !== undefined && { body }),
       ...(pinned !== undefined && { pinned: !!pinned }),
       ...(expiresAt !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
+      ...(locationId !== undefined && { locationId: locationId || null }),
+      ...(positionId !== undefined && { positionId: positionId || null }),
     },
   });
-  res.json(ann);
+  const [hydrated] = await hydrate([ann], req.user.organizationId);
+  res.json(hydrated);
 });
 
 router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
