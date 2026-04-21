@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { NotificationBell } from '@/components/NotificationBell';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LocaleToggle } from '@/components/LocaleToggle';
+import { InstallBanner } from '@/components/InstallBanner';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -34,7 +35,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <NotificationBell />
             </div>
           </div>
-          <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-950 min-h-0">{children}</main>
+          <main className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-950 min-h-0">
+            <InstallBanner />
+            {children}
+          </main>
         </div>
       </div>
     </AuthGuard>
