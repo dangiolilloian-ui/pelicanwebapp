@@ -9,7 +9,7 @@
   "nav.templates": "Plantillas y reglas",
   "nav.admin": "Admin",
   "nav.timeclock": "Fichaje",
-  "nav.team": "Equipo",
+  "nav.team": "Empleados",
   "nav.timeoff": "Ausencias",
   "nav.openShifts": "Turnos libres",
   "nav.swaps": "Cambios",
@@ -187,7 +187,7 @@
   "timeclock.duration": "Duraci\u00f3n",
   "timeclock.active": "activo",
 
-  "team.title": "Equipo",
+  "team.title": "Empleados",
   "team.addMember": "+ A\u00f1adir miembro",
   "team.firstName": "Nombre",
   "team.lastName": "Apellido",

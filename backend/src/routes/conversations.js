@@ -1,9 +1,39 @@
 const { Router } = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { pushToUsers } = require('../lib/webpush');
 
 const router = Router();
+
+// ─── File upload config ────────────────────────────────────────────
+const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads', 'chat');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+  fileFilter: (_req, file, cb) => {
+    // Allow images, PDFs, common docs, and text
+    const allowed = /\.(jpe?g|png|gif|webp|heic|pdf|doc|docx|xls|xlsx|csv|txt|zip)$/i;
+    if (allowed.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error('File type not allowed'));
+    }
+  },
+});
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -272,11 +302,12 @@ router.get('/:id/messages', authenticate, async (req, res) => {
 
 // ─── Send a message ─────────────────────────────────────────────────
 
-router.post('/:id/messages', authenticate, async (req, res) => {
+router.post('/:id/messages', authenticate, upload.single('file'), async (req, res) => {
   const conversationId = req.params.id;
-  const { content } = req.body;
+  const content = req.body.content || '';
 
-  if (!content || !content.trim()) {
+  // Must have either text or a file
+  if (!content.trim() && !req.file) {
     return res.status(400).json({ error: 'Message cannot be empty' });
   }
 
@@ -288,12 +319,23 @@ router.post('/:id/messages', authenticate, async (req, res) => {
     return res.status(403).json({ error: 'Not a member of this conversation' });
   }
 
+  const messageData = {
+    conversationId,
+    senderId: req.user.id,
+    content: content.trim() || (req.file ? '' : ''),
+  };
+
+  // Attach file info if uploaded
+  if (req.file) {
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    messageData.fileUrl = `${baseUrl}/uploads/chat/${req.file.filename}`;
+    messageData.fileName = req.file.originalname;
+    messageData.fileType = req.file.mimetype;
+    messageData.fileSize = req.file.size;
+  }
+
   const message = await prisma.chatMessage.create({
-    data: {
-      conversationId,
-      senderId: req.user.id,
-      content: content.trim(),
-    },
+    data: messageData,
     include: {
       sender: { select: { id: true, firstName: true, lastName: true } },
     },
@@ -330,6 +372,9 @@ router.post('/:id/messages', authenticate, async (req, res) => {
         lastMessage: {
           id: message.id,
           content: message.content,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileType: message.fileType,
           sender: message.sender,
           createdAt: message.createdAt,
         },
@@ -340,11 +385,13 @@ router.post('/:id/messages', authenticate, async (req, res) => {
     const pushUserIds = allMembers.map((m) => m.userId);
     if (pushUserIds.length > 0) {
       const senderName = `${message.sender.firstName} ${message.sender.lastName}`;
-      const preview = message.content.length > 100 ? message.content.slice(0, 97) + '...' : message.content;
+      const preview = message.fileUrl
+        ? (message.content || `sent a file: ${message.fileName}`)
+        : (message.content.length > 100 ? message.content.slice(0, 97) + '...' : message.content);
       pushToUsers(pushUserIds, {
         type: 'MESSAGE',
         title: senderName,
-        body: preview,
+        body: preview.length > 100 ? preview.slice(0, 97) + '...' : preview,
         link: '/dashboard/messages',
       }).catch((err) => console.warn('[push] message notify failed:', err));
     }

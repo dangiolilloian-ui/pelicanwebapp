@@ -3,7 +3,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import type { Shift, User, Position, Location } from '@/types';
 import type { ShiftTemplate } from '@/hooks/useTemplates';
-import { getWeekDays, formatDate, formatTime, isSameDay, addDays, getWeekStart } from '@/lib/dates';
+import { getWeekDays, formatDate, formatTime, isSameDay, addDays, getWeekStart, to12h } from '@/lib/dates';
 import { ShiftModal } from './ShiftModal';
 import { exportShiftsToCSV } from '@/lib/export';
 import { detectConflicts } from '@/lib/conflicts';
@@ -393,7 +393,7 @@ export function WeekCalendar({
                 if (res && 'coverageGaps' in res && res.coverageGaps.length > 0) {
                   const top = res.coverageGaps
                     .slice(0, 5)
-                    .map((g) => `• ${g.date} ${g.startTime}–${g.endTime} (short ${g.shortfall})`)
+                    .map((g) => `• ${g.date} ${to12h(g.startTime)}–${to12h(g.endTime)} (short ${g.shortfall})`)
                     .join('\n');
                   const more = res.coverageGaps.length > 5 ? `\n…and ${res.coverageGaps.length - 5} more` : '';
                   alert(t('schedule.publishedWithGaps', { published: res.count, gaps: res.coverageGaps.length }) + ':\n\n' + top + more);
@@ -692,7 +692,7 @@ export function WeekCalendar({
                                 <span className="flex-1 min-w-0">
                                   <span className="block text-xs font-medium text-gray-900 dark:text-gray-100 truncate">{tpl.name}</span>
                                   <span className="block text-[10px] text-gray-500">
-                                    {tpl.startTime}–{tpl.endTime}
+                                    {to12h(tpl.startTime)}–{to12h(tpl.endTime)}
                                     {tpl.location ? ` · ${tpl.location.name}` : ''}
                                   </span>
                                 </span>

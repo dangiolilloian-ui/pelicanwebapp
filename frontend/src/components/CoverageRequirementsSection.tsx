@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { to12h } from '@/lib/dates';
 import { useT } from '@/lib/i18n';
 import type { Location } from '@/types';
 
@@ -27,8 +28,8 @@ export function CoverageRequirementsSection() {
   const [form, setForm] = useState({
     locationId: '',
     dayOfWeek: '1',
-    startTime: '09:00',
-    endTime: '17:00',
+    startTime: '10:00',
+    endTime: '18:00',
     minStaff: '2',
     notes: '',
   });
@@ -156,7 +157,7 @@ export function CoverageRequirementsSection() {
               <tr key={r.id}>
                 <td className="py-1.5 text-gray-700 dark:text-gray-300">{DAYS[r.dayOfWeek]}</td>
                 <td className="py-1.5 text-gray-700 dark:text-gray-300 tabular-nums">
-                  {r.startTime} – {r.endTime}
+                  {to12h(r.startTime)} – {to12h(r.endTime)}
                 </td>
                 <td className="py-1.5 text-gray-700 dark:text-gray-300">
                   {r.location ? r.location.name : <span className="text-gray-400">{t('coverage.all')}</span>}

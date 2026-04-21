@@ -44,6 +44,7 @@ model User {
   lastName       String   @map("last_name")
   phone          String?
   role           Role     @default(EMPLOYEE)
+  employmentType EmploymentType @default(FULL_TIME) @map("employment_type")
   organizationId String   @map("organization_id")
   pin            String?  // 4-digit kiosk PIN, unique within org
   weeklyHoursCap Int?     @map("weekly_hours_cap") // null = no cap
@@ -89,6 +90,11 @@ enum Role {
   ADMIN
   MANAGER
   EMPLOYEE
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
 }
 
 model Position {
@@ -597,6 +603,10 @@ model ChatMessage {
   conversationId String   @map("conversation_id")
   senderId       String   @map("sender_id")
   content        String
+  fileUrl        String?  @map("file_url")
+  fileName       String?  @map("file_name")
+  fileType       String?  @map("file_type")
+  fileSize       Int?     @map("file_size")
   createdAt      DateTime @default(now()) @map("created_at")
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

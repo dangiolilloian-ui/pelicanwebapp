@@ -3,6 +3,7 @@ node_modules/
 .env
 *.log
 pgdata/
+backend/uploads/
 # Database dumps can contain real employee PII — never commit.
 backup/data/
 *.sql.gz

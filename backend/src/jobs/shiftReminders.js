@@ -21,15 +21,18 @@ async function sendShiftReminders() {
     include: {
       user: { select: { id: true, firstName: true } },
       location: { select: { name: true } },
+      organization: { select: { timezone: true } },
     },
   });
 
   if (shifts.length === 0) return;
 
   for (const s of shifts) {
+    const tz = s.organization?.timezone || 'America/New_York';
     const when = new Date(s.startTime).toLocaleTimeString("en-US", {
       hour: "numeric",
       minute: "2-digit",
+      timeZone: tz,
     });
     const locationBit = s.location?.name ? ` at ${s.location.name}` : "";
     await notifyMany([s.userId], {

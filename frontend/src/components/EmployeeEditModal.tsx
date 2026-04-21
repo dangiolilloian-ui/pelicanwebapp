@@ -36,6 +36,7 @@ interface Props {
   member: User;
   onSave: (data: {
     role?: string;
+    employmentType?: string;
     pin?: string | null;
     weeklyHoursCap?: number | null;
     birthDate?: string | null;
@@ -50,6 +51,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
   const t = useT();
   const isOwner = currentUser?.role === 'OWNER';
   const [role, setRole] = useState(member.role || 'EMPLOYEE');
+  const [employmentType, setEmploymentType] = useState(member.employmentType || 'FULL_TIME');
   const [pin, setPin] = useState(member.pin || '');
   const [cap, setCap] = useState(member.weeklyHoursCap != null ? String(member.weeklyHoursCap) : '');
   const [dob, setDob] = useState(member.birthDate ? member.birthDate.slice(0, 10) : '');
@@ -183,6 +185,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
         ...(isOwner && member.role !== 'OWNER' && member.id !== currentUser?.id && role !== member.role
           ? { role }
           : {}),
+        ...(employmentType !== member.employmentType ? { employmentType } : {}),
         pin: pin === '' ? null : pin,
         weeklyHoursCap: cap === '' ? null : Number(cap),
         birthDate: dob === '' ? null : dob,
@@ -229,6 +232,20 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
               </p>
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Employment Type
+            </label>
+            <select
+              value={employmentType}
+              onChange={(e) => setEmploymentType(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="FULL_TIME">Full Time</option>
+              <option value="PART_TIME">Part Time</option>
+            </select>
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">

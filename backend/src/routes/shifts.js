@@ -73,8 +73,10 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
     overtimeWarnings({ userId: shift.userId, startTime, endTime }),
   ]);
   const assignedName = shift.user ? `${shift.user.firstName} ${shift.user.lastName}` : 'unassigned';
+  const createOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+  const createTz = createOrg?.timezone || 'America/New_York';
   await audit(req, 'SHIFT_CREATE', 'SHIFT', shift.id,
-    `Created shift for ${assignedName} on ${new Date(shift.startTime).toLocaleString()}`,
+    `Created shift for ${assignedName} on ${new Date(shift.startTime).toLocaleString('en-US', { timeZone: createTz })}`,
     { userId: shift.userId, startTime: shift.startTime, endTime: shift.endTime });
   res.status(201).json({ ...shift, _warnings: [...avail, ...ot] });
 });
@@ -215,8 +217,10 @@ router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), as
   await prisma.shift.delete({ where: { id: req.params.id } });
   if (before) {
     const who = before.user ? `${before.user.firstName} ${before.user.lastName}` : 'unassigned';
+    const delOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+    const delTz = delOrg?.timezone || 'America/New_York';
     await audit(req, 'SHIFT_DELETE', 'SHIFT', req.params.id,
-      `Deleted shift for ${who} on ${new Date(before.startTime).toLocaleString()}`,
+      `Deleted shift for ${who} on ${new Date(before.startTime).toLocaleString('en-US', { timeZone: delTz })}`,
       { userId: before.userId, startTime: before.startTime, endTime: before.endTime });
   }
   res.status(204).end();

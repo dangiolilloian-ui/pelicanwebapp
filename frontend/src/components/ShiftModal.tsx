@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { Shift, User, Position, Location } from '@/types';
-import { toDateInputValue } from '@/lib/dates';
+import { toDateInputValue, to12h } from '@/lib/dates';
 import { useTemplates } from '@/hooks/useTemplates';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
@@ -150,7 +150,7 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
               <option value="">{t('shiftModal.templatePlaceholder')}</option>
               {templates.map((tpl) => (
                 <option key={tpl.id} value={tpl.id}>
-                  {tpl.name} ({tpl.startTime}–{tpl.endTime})
+                  {tpl.name} ({to12h(tpl.startTime)}–{to12h(tpl.endTime)})
                 </option>
               ))}
             </select>

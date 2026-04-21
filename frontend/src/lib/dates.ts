@@ -1,7 +1,7 @@
 export function getWeekStart(date: Date): Date {
   const d = new Date(date);
-  const day = d.getDay();
-  d.setDate(d.getDate() - day + 1); // Monday
+  const day = d.getDay(); // 0=Sun
+  d.setDate(d.getDate() - day); // Sunday
   d.setHours(0, 0, 0, 0);
   return d;
 }
@@ -18,6 +18,16 @@ export function formatDate(date: Date): string {
 
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+/** Convert "HH:mm" (24-hour) string to "h:mm AM/PM" */
+export function to12h(time: string): string {
+  const [hStr, mStr] = time.split(':');
+  let h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  if (h === 0) h = 12;
+  else if (h > 12) h -= 12;
+  return `${h}:${mStr} ${ampm}`;
 }
 
 export function toDateInputValue(date: Date): string {
@@ -39,11 +49,11 @@ export function getMonthStart(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-/** Returns the 6x7 grid of days shown in a month view (Mon-first), padded with prev/next month days. */
+/** Returns the 6x7 grid of days shown in a month view (Sun-first), padded with prev/next month days. */
 export function getMonthGrid(anchor: Date): Date[] {
   const first = getMonthStart(anchor);
-  // Mon=0..Sun=6
-  const weekday = (first.getDay() + 6) % 7;
+  // Sun=0 already lines up — pad back by the day-of-week index
+  const weekday = first.getDay();
   const gridStart = addDays(first, -weekday);
   return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
 }

@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useT } from '@/lib/i18n';
 import { useTemplates } from '@/hooks/useTemplates';
 import { useTeam } from '@/hooks/useTeam';
+import { to12h } from '@/lib/dates';
 import type { Position, Location } from '@/types';
 
 interface RecurringShift {
@@ -27,6 +28,7 @@ interface RecurringShift {
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+
 export default function TemplatesPage() {
   const { token, user } = useAuth();
   const t = useT();
@@ -35,7 +37,7 @@ export default function TemplatesPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const { templates, create: createTemplate, remove: removeTemplate } = useTemplates();
-  const [newTpl, setNewTpl] = useState({ name: '', startTime: '09:00', endTime: '17:00', positionId: '', locationId: '' });
+  const [newTpl, setNewTpl] = useState({ name: '', startTime: '10:00', endTime: '18:00', positionId: '', locationId: '' });
 
   const { members } = useTeam();
   const [recurring, setRecurring] = useState<RecurringShift[]>([]);
@@ -45,8 +47,8 @@ export default function TemplatesPage() {
     positionId: '',
     locationId: '',
     dayOfWeek: 1,
-    startTime: '09:00',
-    endTime: '17:00',
+    startTime: '10:00',
+    endTime: '18:00',
     validFrom: todayISO,
     validUntil: '',
   });
@@ -140,7 +142,7 @@ export default function TemplatesPage() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-900 dark:text-gray-100 truncate">{tpl.name}</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                  {tpl.startTime}–{tpl.endTime}
+                  {to12h(tpl.startTime)}–{to12h(tpl.endTime)}
                   {tpl.position ? ` · ${tpl.position.name}` : ''}
                   {tpl.location ? ` · ${tpl.location.name}` : ''}
                 </p>
@@ -159,7 +161,7 @@ export default function TemplatesPage() {
                 positionId: newTpl.positionId || undefined,
                 locationId: newTpl.locationId || undefined,
               });
-              setNewTpl({ name: '', startTime: '09:00', endTime: '17:00', positionId: '', locationId: '' });
+              setNewTpl({ name: '', startTime: '10:00', endTime: '18:00', positionId: '', locationId: '' });
             }}
             className="flex flex-wrap items-center gap-2 px-4 py-3"
           >
@@ -215,7 +217,7 @@ export default function TemplatesPage() {
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-900 dark:text-gray-100 truncate">
-                  {r.startTime}–{r.endTime}
+                  {to12h(r.startTime)}–{to12h(r.endTime)}
                   {r.user ? ` · ${r.user.firstName} ${r.user.lastName}` : ` · ${t('common.unassigned')}`}
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 truncate">

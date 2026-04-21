@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { to12h } from '@/lib/dates';
 import { useT } from '@/lib/i18n';
 import clsx from 'clsx';
 
@@ -92,7 +93,7 @@ export function CoverageGapsPanel({ rangeStart, rangeEnd, refreshKey = 0 }: Prop
               <li key={i} className="text-xs text-amber-800 dark:text-amber-200">
                 <span className="font-mono">{g.date}</span>
                 {' '}{DAYS[g.dayOfWeek]}{' '}
-                <span className="font-mono">{g.startTime}–{g.endTime}</span>
+                <span className="font-mono">{to12h(g.startTime)}–{to12h(g.endTime)}</span>
                 {' · '}
                 <span className={clsx('font-medium', g.actual === 0 && 'text-red-700 dark:text-red-300')}>
                   {g.actual}/{g.minStaff}

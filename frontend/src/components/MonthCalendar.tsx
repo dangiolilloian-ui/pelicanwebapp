@@ -6,6 +6,7 @@ import type { Shift, User, Position, Location } from '@/types';
 import { getMonthGrid, getMonthStart, isSameDay, formatMonth, formatTime } from '@/lib/dates';
 import { ShiftModal } from './ShiftModal';
 import clsx from 'clsx';
+import { SearchableSelect } from './SearchableSelect';
 
 interface MonthCalendarProps {
   anchor: Date;
@@ -38,17 +39,29 @@ export function MonthCalendar({
     const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
     return holidays.get(key);
   };
-  const WEEKDAY_LABELS = [t('monthCal.mon'), t('monthCal.tue'), t('monthCal.wed'), t('monthCal.thu'), t('monthCal.fri'), t('monthCal.sat'), t('monthCal.sun')];
+  const WEEKDAY_LABELS = [t('monthCal.sun'), t('monthCal.mon'), t('monthCal.tue'), t('monthCal.wed'), t('monthCal.thu'), t('monthCal.fri'), t('monthCal.sat')];
   const monthStart = getMonthStart(anchor);
   const days = getMonthGrid(anchor);
   const [modal, setModal] = useState<{ shift?: Shift; date?: Date } | null>(null);
+
+  // Filters
+  const [filterUser, setFilterUser] = useState('');
+  const [filterPosition, setFilterPosition] = useState('');
+  const [filterLocation, setFilterLocation] = useState('');
+
+  const filteredShifts = shifts.filter((s) => {
+    if (filterUser && s.user?.id !== filterUser) return false;
+    if (filterPosition && s.position?.id !== filterPosition) return false;
+    if (filterLocation && s.location?.id !== filterLocation) return false;
+    return true;
+  });
 
   const goPrev = () => onMonthChange(new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1));
   const goNext = () => onMonthChange(new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1));
   const goToday = () => onMonthChange(new Date());
 
   const shiftsForDay = (day: Date) =>
-    shifts.filter((s) => isSameDay(new Date(s.startTime), day));
+    filteredShifts.filter((s) => isSameDay(new Date(s.startTime), day));
 
   return (
     <div>
@@ -85,6 +98,49 @@ export function MonthCalendar({
         >
           {t('schedule.newShift')}
         </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('schedule.filters')}</span>
+        <SearchableSelect
+          options={members.map((m) => ({ value: m.id, label: `${m.firstName} ${m.lastName}` }))}
+          value={filterUser}
+          onChange={setFilterUser}
+          placeholder={t('schedule.allMembers')}
+        />
+        {positions.length > 0 && (
+          <select
+            value={filterPosition}
+            onChange={(e) => setFilterPosition(e.target.value)}
+            className="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">{t('schedule.allPositions')}</option>
+            {positions.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        )}
+        {locations.length > 0 && (
+          <select
+            value={filterLocation}
+            onChange={(e) => setFilterLocation(e.target.value)}
+            className="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">{t('schedule.allLocations')}</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </select>
+        )}
+        {(filterUser || filterPosition || filterLocation) && (
+          <button
+            onClick={() => { setFilterUser(''); setFilterPosition(''); setFilterLocation(''); }}
+            className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+          >
+            {t('schedule.clear')}
+          </button>
+        )}
       </div>
 
       {/* Grid */}

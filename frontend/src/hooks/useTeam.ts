@@ -30,7 +30,7 @@ export function useTeam() {
   // Password is optional now: leaving it blank generates a single-use invite
   // link that the manager can forward to the new employee. The backend
   // returns `inviteToken` when that path is taken.
-  const addMember = async (data: { email: string; firstName: string; lastName: string; phone?: string; role?: string; password?: string }) => {
+  const addMember = async (data: { email: string; firstName: string; lastName: string; phone?: string; role?: string; employmentType?: string; password?: string }) => {
     if (!token) return;
     const user = await api<User & { inviteToken?: string | null }>('/users', {
       token,

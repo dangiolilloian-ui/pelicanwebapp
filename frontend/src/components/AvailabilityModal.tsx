@@ -18,7 +18,7 @@ export function AvailabilityModal({ member, onClose }: { member: User; onClose: 
   const t = useT();
   const DAYS = [t('availability.sun'), t('availability.mon'), t('availability.tue'), t('availability.wed'), t('availability.thu'), t('availability.fri'), t('availability.sat')];
   const [entries, setEntries] = useState<AvailabilityEntry[]>(
-    DAYS.map((_, i) => ({ dayOfWeek: i, startTime: '09:00', endTime: '17:00', available: true }))
+    DAYS.map((_, i) => ({ dayOfWeek: i, startTime: '10:00', endTime: '18:00', available: true }))
   );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,7 +31,7 @@ export function AvailabilityModal({ member, onClose }: { member: User; onClose: 
           const map = new Map(data.map((d) => [d.dayOfWeek, d]));
           setEntries(
             DAYS.map((_, i) =>
-              map.get(i) || { dayOfWeek: i, startTime: '09:00', endTime: '17:00', available: true }
+              map.get(i) || { dayOfWeek: i, startTime: '10:00', endTime: '18:00', available: true }
             )
           );
         }

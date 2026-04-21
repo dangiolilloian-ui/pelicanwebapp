@@ -1,4 +1,5 @@
-export type Role = 'OWNER' | 'MANAGER' | 'EMPLOYEE';
+export type Role = 'OWNER' | 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
+export type EmploymentType = 'FULL_TIME' | 'PART_TIME';
 
 export interface User {
   id: string;
@@ -7,6 +8,7 @@ export interface User {
   lastName: string;
   phone?: string;
   role: Role;
+  employmentType?: EmploymentType;
   organizationId?: string;
   weeklyHoursCap?: number | null;
   pin?: string | null;

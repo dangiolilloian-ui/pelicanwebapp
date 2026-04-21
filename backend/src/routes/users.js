@@ -18,7 +18,7 @@ router.get('/', authenticate, async (req, res) => {
     where: { organizationId: req.user.organizationId },
     select: {
       id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
-      weeklyHoursCap: true, pin: true, birthDate: true,
+      employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true,
       positions: { select: { id: true, name: true, color: true } },
       locations: { select: { id: true, name: true } },
     },
@@ -51,7 +51,7 @@ router.post('/me/ical-token', authenticate, async (req, res) => {
 
 // Invite / create employee
 router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
-  const { email, firstName, lastName, phone, role, password } = req.body;
+  const { email, firstName, lastName, phone, role, password, employmentType } = req.body;
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -72,10 +72,11 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
       lastName,
       phone,
       role: role || 'EMPLOYEE',
+      employmentType: employmentType || 'FULL_TIME',
       passwordHash,
       organizationId: req.user.organizationId,
     },
-    select: { id: true, email: true, firstName: true, lastName: true, phone: true, role: true },
+    select: { id: true, email: true, firstName: true, lastName: true, phone: true, role: true, employmentType: true },
   });
 
   let inviteToken = null;
@@ -149,7 +150,7 @@ router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANA
 
 // Update user
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
-  const { firstName, lastName, phone, role, weeklyHoursCap, pin, birthDate, positionIds, locationIds } = req.body;
+  const { firstName, lastName, phone, role, employmentType, weeklyHoursCap, pin, birthDate, positionIds, locationIds } = req.body;
 
   // Only the owner can change roles, and nobody can set OWNER
   if (role) {
@@ -218,6 +219,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
         ...(lastName && { lastName }),
         ...(phone !== undefined && { phone }),
         ...(role && { role }),
+        ...(employmentType && ['FULL_TIME', 'PART_TIME'].includes(employmentType) && { employmentType }),
         ...(weeklyHoursCap !== undefined && {
           weeklyHoursCap: weeklyHoursCap === null || weeklyHoursCap === '' ? null : Number(weeklyHoursCap),
         }),
@@ -237,7 +239,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
       },
       select: {
         id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
-        weeklyHoursCap: true, pin: true, birthDate: true,
+        employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true,
         positions: { select: { id: true, name: true, color: true } },
         locations: { select: { id: true, name: true } },
       },

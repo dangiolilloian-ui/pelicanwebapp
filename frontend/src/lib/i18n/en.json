@@ -9,7 +9,7 @@
   "nav.templates": "Templates & Rules",
   "nav.admin": "Admin",
   "nav.timeclock": "Time Clock",
-  "nav.team": "Team",
+  "nav.team": "Employees",
   "nav.timeoff": "Time Off",
   "nav.openShifts": "Open Shifts",
   "nav.swaps": "Swaps",
@@ -187,7 +187,7 @@
   "timeclock.duration": "Duration",
   "timeclock.active": "active",
 
-  "team.title": "Team",
+  "team.title": "Employees",
   "team.addMember": "+ Add Member",
   "team.firstName": "First name",
   "team.lastName": "Last name",

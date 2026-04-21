@@ -15,7 +15,7 @@ export default function TeamPage() {
   const { user } = useAuth();
   const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: 'EMPLOYEE' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '', role: 'EMPLOYEE', employmentType: 'FULL_TIME' });
   const [error, setError] = useState('');
   const [availabilityFor, setAvailabilityFor] = useState<User | null>(null);
   const [editingMember, setEditingMember] = useState<User | null>(null);
@@ -57,7 +57,7 @@ export default function TeamPage() {
     try {
       const result = await addMember(form);
       const name = `${form.firstName} ${form.lastName}`;
-      setForm({ firstName: '', lastName: '', email: '', password: '', role: 'EMPLOYEE' });
+      setForm({ firstName: '', lastName: '', email: '', password: '', role: 'EMPLOYEE', employmentType: 'FULL_TIME' });
       setShowForm(false);
       if (result?.inviteToken) {
         setLinkModal({
@@ -136,12 +136,12 @@ export default function TeamPage() {
             onChange={(e) => update('email', e.target.value)}
             className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
+          <input
+            type="password" placeholder={t('team.tempPassword')} value={form.password}
+            onChange={(e) => update('password', e.target.value)}
+            className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
           <div className="grid grid-cols-2 gap-3">
-            <input
-              type="password" placeholder={t('team.tempPassword')} value={form.password}
-              onChange={(e) => update('password', e.target.value)}
-              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
             <select
               value={form.role}
               onChange={(e) => update('role', e.target.value)}
@@ -150,6 +150,14 @@ export default function TeamPage() {
               <option value="EMPLOYEE">{t('team.roleEmployee')}</option>
               <option value="MANAGER">{t('team.roleManager')}</option>
               <option value="ADMIN">Admin</option>
+            </select>
+            <select
+              value={form.employmentType}
+              onChange={(e) => update('employmentType', e.target.value)}
+              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="FULL_TIME">Full Time</option>
+              <option value="PART_TIME">Part Time</option>
             </select>
           </div>
           <button
@@ -207,10 +215,15 @@ export default function TeamPage() {
       ) : (
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
           <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-            {t('team.memberCount', { n: members.filter((m) => {
-              const q = search.toLowerCase();
-              return !q || `${m.firstName} ${m.lastName}`.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
-            }).length })}
+            {(() => {
+              const filtered = members.filter((m) => {
+                const q = search.toLowerCase();
+                return !q || `${m.firstName} ${m.lastName}`.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
+              });
+              const ft = filtered.filter((m) => m.employmentType !== 'PART_TIME').length;
+              const pt = filtered.filter((m) => m.employmentType === 'PART_TIME').length;
+              return `${filtered.length} members — ${ft} full time — ${pt} part time`;
+            })()}
           </div>
           {members
             .filter((m) => {
@@ -240,6 +253,13 @@ export default function TeamPage() {
                   </span>
                 )}
                 {roleBadge(m.role)}
+                <span className={clsx('rounded-full px-2 py-0.5 text-xs font-medium',
+                  m.employmentType === 'PART_TIME'
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                    : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                )}>
+                  {m.employmentType === 'PART_TIME' ? 'PT' : 'FT'}
+                </span>
                 <button
                   onClick={() => setAvailabilityFor(m)}
                   className="text-xs text-indigo-600 hover:text-indigo-800"
