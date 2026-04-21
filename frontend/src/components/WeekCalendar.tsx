@@ -11,6 +11,7 @@ import { getCellStatus, type CellStatus } from '@/lib/availability';
 import type { AvailabilityEntry, TimeOffEntry } from '@/hooks/useAvailability';
 import { useT } from '@/lib/i18n';
 import clsx from 'clsx';
+import { SearchableSelect } from './SearchableSelect';
 
 interface WeekCalendarProps {
   weekStart: Date;
@@ -387,16 +388,12 @@ export function WeekCalendar({
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('schedule.filters')}</span>
-        <select
+        <SearchableSelect
+          options={members.map((m) => ({ value: m.id, label: `${m.firstName} ${m.lastName}` }))}
           value={filterUser}
-          onChange={(e) => setFilterUser(e.target.value)}
-          className="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="">{t('schedule.allMembers')}</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>
-          ))}
-        </select>
+          onChange={setFilterUser}
+          placeholder={t('schedule.allMembers')}
+        />
         {positions.length > 0 && (
           <select
             value={filterPosition}
