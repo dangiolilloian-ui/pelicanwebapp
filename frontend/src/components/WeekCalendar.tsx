@@ -75,6 +75,17 @@ export function WeekCalendar({
   const [dragOver, setDragOver] = useState<string | null>(null);
   const dragDataRef = useRef<DragData | null>(null);
   const [isDraggingCopy, setIsDraggingCopy] = useState(false);
+  // Track Ctrl/Cmd key globally — drag events don't always expose modifier keys
+  const ctrlHeldRef = useRef(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === 'Control' || e.key === 'Meta') { ctrlHeldRef.current = true; setIsDraggingCopy(true); } };
+    const up = (e: KeyboardEvent) => { if (e.key === 'Control' || e.key === 'Meta') { ctrlHeldRef.current = false; setIsDraggingCopy(false); } };
+    const blur = () => { ctrlHeldRef.current = false; setIsDraggingCopy(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); };
+  }, []);
   // Empty-cell quick-add popover. Managers with templates defined can drop a
   // shift in one click instead of tabbing through the full modal.
   const [quickAdd, setQuickAdd] = useState<{ cellKey: string; date: Date; userId?: string } | null>(null);
@@ -192,15 +203,13 @@ export function WeekCalendar({
   // Drag handlers
   
   const handleDragStart = (e: React.DragEvent, shift: Shift, day: Date) => {
-    const isCopy = e.ctrlKey || e.metaKey;
     dragDataRef.current = {
       shiftId: shift.id,
       sourceUserId: shift.user?.id || null,
       sourceDate: day.toISOString(),
-      isCopy,
+      isCopy: false, // will be determined on drop
     };
-    setIsDraggingCopy(isCopy);
-    e.dataTransfer.effectAllowed = isCopy ? 'copy' : 'move';
+    e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData('text/plain', shift.id);
   };
 
@@ -210,8 +219,11 @@ export function WeekCalendar({
 
   const handleDragOver = (e: React.DragEvent, cellKey: string) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = dragDataRef.current?.isCopy ? 'copy' : 'move';
-    setDragOver(cellKey);
+    // Detect Ctrl/Cmd — use drag event props OR global keyboard listener as fallback
+    const isCopy = !!(e.ctrlKey || e.metaKey || ctrlHeldRef.current);
+    e.dataTransfer.dropEffect = isCopy ? 'copy' : 'move';
+    setIsDraggingCopy((prev) => (prev !== isCopy ? isCopy : prev));
+    setDragOver((prev) => (prev !== cellKey ? cellKey : prev));
   };
 
   const handleDragLeave = () => setDragOver(null);
@@ -223,6 +235,9 @@ export function WeekCalendar({
     const drag = dragDataRef.current;
     if (!drag) return;
     dragDataRef.current = null;
+
+    // Check Ctrl/Cmd at the moment of drop — use event props OR global ref
+    const isCopy = e.ctrlKey || e.metaKey || ctrlHeldRef.current;
 
     const shift = shifts.find((s) => s.id === drag.shiftId);
     if (!shift) return;
@@ -237,7 +252,7 @@ export function WeekCalendar({
 
     const newUserId = targetUserId === '__unassigned__' ? null : targetUserId;
 
-    if (drag.isCopy) {
+    if (isCopy) {
       await onCreateShift({
         startTime: newStart.toISOString(),
         endTime: newEnd.toISOString(),
@@ -363,7 +378,7 @@ export function WeekCalendar({
           </button>
         </div>
       </div>
-      {isDraggingCopy && (
+      {isDraggingCopy && dragOver && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
           <span>📋</span>
           <span>Copy mode — drop on any cell to duplicate this shift there</span>
