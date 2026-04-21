@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { pushToUsers } = require('../lib/webpush');
 
 const router = Router();
 
@@ -333,6 +334,19 @@ router.post('/:id/messages', authenticate, async (req, res) => {
           createdAt: message.createdAt,
         },
       });
+    }
+
+    // Send push notifications to members who might not have the app open
+    const pushUserIds = allMembers.map((m) => m.userId);
+    if (pushUserIds.length > 0) {
+      const senderName = `${message.sender.firstName} ${message.sender.lastName}`;
+      const preview = message.content.length > 100 ? message.content.slice(0, 97) + '...' : message.content;
+      pushToUsers(pushUserIds, {
+        type: 'MESSAGE',
+        title: senderName,
+        body: preview,
+        link: '/dashboard/messages',
+      }).catch((err) => console.warn('[push] message notify failed:', err));
     }
   }
 
