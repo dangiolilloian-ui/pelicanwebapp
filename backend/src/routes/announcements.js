@@ -64,8 +64,9 @@ router.get('/', authenticate, async (req, res) => {
   const isManager = ['OWNER', 'ADMIN', 'MANAGER'].includes(req.user.role);
   const where = { organizationId: req.user.organizationId };
 
+  // For employees, only filter out expired announcements (not un-pinned ones).
+  // The dedicated page shows all; the dashboard bar filters client-side.
   if (!isManager) {
-    where.pinned = true;
     where.OR = [{ expiresAt: null }, { expiresAt: { gte: now } }];
   }
 

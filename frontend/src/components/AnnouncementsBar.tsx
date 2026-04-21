@@ -40,8 +40,8 @@ export function AnnouncementsBar() {
   }, [load]);
 
   const now = Date.now();
+  // Dashboard bar only shows pinned + non-expired announcements
   const visible = items.filter((a) => {
-    if (!isManager) return true;
     if (!a.pinned) return false;
     if (a.expiresAt && new Date(a.expiresAt).getTime() < now) return false;
     return true;
