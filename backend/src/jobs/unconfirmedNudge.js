@@ -42,11 +42,20 @@ async function sendUnconfirmedNudges() {
     managersByOrg.set(m.organizationId, list);
   }
 
+  // Look up org timezones so notifications display local times
+  const orgs = await prisma.organization.findMany({
+    where: { id: { in: orgIds } },
+    select: { id: true, timezone: true },
+  });
+  const tzByOrg = new Map(orgs.map((o) => [o.id, o.timezone || 'America/New_York']));
+
   for (const s of shifts) {
+    const tz = tzByOrg.get(s.organizationId) || 'America/New_York';
     const when = new Date(s.startTime).toLocaleString('en-US', {
       weekday: 'short',
       hour: 'numeric',
       minute: '2-digit',
+      timeZone: tz,
     });
     const label = [s.position?.name, s.location?.name].filter(Boolean).join(' @ ') || 'Shift';
 

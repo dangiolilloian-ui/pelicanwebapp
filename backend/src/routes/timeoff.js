@@ -92,10 +92,12 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
   }
 
   if (status === 'APPROVED' || status === 'DENIED') {
+    const toOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+    const toTz = toOrg?.timezone || 'America/New_York';
     await notify(request.userId, {
       type: status === 'APPROVED' ? 'TIMEOFF_APPROVED' : 'TIMEOFF_DENIED',
       title: `Time-off ${status.toLowerCase()}`,
-      body: `Your request for ${new Date(request.startDate).toLocaleDateString()} – ${new Date(request.endDate).toLocaleDateString()} was ${status.toLowerCase()}.`,
+      body: `Your request for ${new Date(request.startDate).toLocaleDateString('en-US', { timeZone: toTz })} – ${new Date(request.endDate).toLocaleDateString('en-US', { timeZone: toTz })} was ${status.toLowerCase()}.`,
       link: '/dashboard/timeoff',
     });
   }

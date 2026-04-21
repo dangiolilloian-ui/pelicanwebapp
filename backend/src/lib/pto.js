@@ -91,13 +91,15 @@ async function recordConsumeForTimeoff(organizationId, request, actorId) {
   });
   if (existing) return existing;
 
+  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true } });
+  const tz = org?.timezone || 'America/New_York';
   return prisma.ptoLedgerEntry.create({
     data: {
       organizationId,
       userId: request.userId,
       delta: -hours,
       kind: 'CONSUME',
-      reason: `Time-off ${new Date(request.startDate).toLocaleDateString()} – ${new Date(request.endDate).toLocaleDateString()}`,
+      reason: `Time-off ${new Date(request.startDate).toLocaleDateString('en-US', { timeZone: tz })} – ${new Date(request.endDate).toLocaleDateString('en-US', { timeZone: tz })}`,
       refType: 'TIMEOFF',
       refId: request.id,
       actorId: actorId || null,

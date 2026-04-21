@@ -145,9 +145,14 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
     { before, after: { userId: shift.userId, startTime: shift.startTime, endTime: shift.endTime, status: shift.status } });
 
   // ── Notify affected employees about the change ──────────────────
-  const managerName = `${req.user.firstName} ${req.user.lastName}`;
-  const shiftDate = new Date(shift.startTime).toLocaleDateString();
-  const shiftTime = `${new Date(shift.startTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} – ${new Date(shift.endTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  const [manager, org] = await Promise.all([
+    prisma.user.findUnique({ where: { id: req.user.id }, select: { firstName: true, lastName: true } }),
+    prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } }),
+  ]);
+  const managerName = manager ? `${manager.firstName} ${manager.lastName}` : 'A manager';
+  const tz = org?.timezone || 'America/New_York';
+  const shiftDate = new Date(shift.startTime).toLocaleDateString('en-US', { timeZone: tz });
+  const shiftTime = `${new Date(shift.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz })} – ${new Date(shift.endTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz })}`;
 
   // If the shift was reassigned to a different person
   if (before.userId && shift.userId && before.userId !== shift.userId) {
@@ -551,11 +556,15 @@ router.post('/:id/drop', authenticate, async (req, res) => {
     select: { id: true },
   });
   if (managers.length > 0) {
-    const when = shift.startTime.toLocaleString();
+    const dropOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+    const dropTz = dropOrg?.timezone || 'America/New_York';
+    const dropUser = await prisma.user.findUnique({ where: { id: req.user.id }, select: { firstName: true, lastName: true } });
+    const dropName = dropUser ? `${dropUser.firstName} ${dropUser.lastName}` : 'An employee';
+    const when = shift.startTime.toLocaleString('en-US', { timeZone: dropTz });
     const label = [shift.position?.name, shift.location?.name].filter(Boolean).join(' @ ') || 'Shift';
     await notifyMany(managers.map((m) => m.id), {
       type: 'SHIFT_DROPPED',
-      title: `${req.user.firstName} ${req.user.lastName} dropped a shift`,
+      title: `${dropName} dropped a shift`,
       body: `${label} — ${when}`,
       link: '/dashboard/schedule',
     });
@@ -610,6 +619,8 @@ router.post('/:id/claim', authenticate, async (req, res) => {
     });
 
     // Notify managers
+    const claimOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+    const claimTz = claimOrg?.timezone || 'America/New_York';
     const managers = await prisma.user.findMany({
       where: {
         organizationId: req.user.organizationId,
@@ -622,7 +633,7 @@ router.post('/:id/claim', authenticate, async (req, res) => {
       {
         type: 'SHIFT_CLAIM',
         title: `${claim.user.firstName} ${claim.user.lastName} wants an open shift`,
-        body: `Requested ${new Date(shift.startTime).toLocaleString()}`,
+        body: `Requested ${new Date(shift.startTime).toLocaleString('en-US', { timeZone: claimTz })}`,
         link: '/dashboard/schedule',
       }
     );
@@ -664,10 +675,12 @@ router.post('/claims/:claimId/approve', authenticate, requireRole('OWNER', 'ADMI
     }),
   ]);
 
+  const approveOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+  const approveTz = approveOrg?.timezone || 'America/New_York';
   await notify(claim.userId, {
     type: 'SHIFT_CLAIM',
     title: 'Your open-shift request was approved',
-    body: `You've been assigned the shift starting ${new Date(claim.shift.startTime).toLocaleString()}.`,
+    body: `You've been assigned the shift starting ${new Date(claim.shift.startTime).toLocaleString('en-US', { timeZone: approveTz })}.`,
     link: '/dashboard/schedule',
   });
 
@@ -687,10 +700,12 @@ router.post('/claims/:claimId/deny', authenticate, requireRole('OWNER', 'ADMIN',
     where: { id: claim.id },
     data: { status: 'DENIED' },
   });
+  const denyOrg = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: { timezone: true } });
+  const denyTz = denyOrg?.timezone || 'America/New_York';
   await notify(claim.userId, {
     type: 'SHIFT_CLAIM',
     title: 'Your open-shift request was denied',
-    body: `Shift on ${new Date(claim.shift.startTime).toLocaleString()}.`,
+    body: `Shift on ${new Date(claim.shift.startTime).toLocaleString('en-US', { timeZone: denyTz })}.`,
     link: '/dashboard/open-shifts',
   });
   res.json({ ok: true });
