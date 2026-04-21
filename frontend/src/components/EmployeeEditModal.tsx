@@ -35,6 +35,7 @@ interface PtoLedgerEntry {
 interface Props {
   member: User;
   onSave: (data: {
+    role?: string;
     pin?: string | null;
     weeklyHoursCap?: number | null;
     birthDate?: string | null;
@@ -45,8 +46,10 @@ interface Props {
 }
 
 export function EmployeeEditModal({ member, onSave, onClose }: Props) {
-  const { token } = useAuth();
+  const { token, user: currentUser } = useAuth();
   const t = useT();
+  const isOwner = currentUser?.role === 'OWNER';
+  const [role, setRole] = useState(member.role || 'EMPLOYEE');
   const [pin, setPin] = useState(member.pin || '');
   const [cap, setCap] = useState(member.weeklyHoursCap != null ? String(member.weeklyHoursCap) : '');
   const [dob, setDob] = useState(member.birthDate ? member.birthDate.slice(0, 10) : '');
@@ -177,6 +180,9 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
     setSaving(true);
     try {
       await onSave({
+        ...(isOwner && member.role !== 'OWNER' && member.id !== currentUser?.id && role !== member.role
+          ? { role }
+          : {}),
         pin: pin === '' ? null : pin,
         weeklyHoursCap: cap === '' ? null : Number(cap),
         birthDate: dob === '' ? null : dob,
@@ -201,6 +207,28 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
 
         <form onSubmit={submit} className="space-y-4">
           {error && <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg p-2">{error}</p>}
+
+          {/* Role — only the owner can change roles, and you can't change
+              another owner or yourself */}
+          {isOwner && member.role !== 'OWNER' && member.id !== currentUser?.id && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Role
+              </label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="EMPLOYEE">Employee</option>
+                <option value="MANAGER">Manager</option>
+                <option value="ADMIN">Admin</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Managers can create schedules and manage their locations. Admins have broader access across all locations.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">

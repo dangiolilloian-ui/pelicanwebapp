@@ -151,6 +151,23 @@ router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANA
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { firstName, lastName, phone, role, weeklyHoursCap, pin, birthDate, positionIds, locationIds } = req.body;
 
+  // Only the owner can change roles, and nobody can set OWNER
+  if (role) {
+    if (req.user.role !== 'OWNER') {
+      return res.status(403).json({ error: 'Only the owner can change roles' });
+    }
+    if (role === 'OWNER') {
+      return res.status(400).json({ error: 'Cannot assign OWNER role' });
+    }
+    if (!['EMPLOYEE', 'MANAGER', 'ADMIN'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    // Prevent changing the owner's own role
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: 'Cannot change your own role' });
+    }
+  }
+
   // Validate PIN format + uniqueness within org
   if (pin !== undefined && pin !== null && pin !== '') {
     if (!/^\d{4,6}$/.test(pin)) {
