@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { AvailabilityModal } from '@/components/AvailabilityModal';
+import { NotificationsSection } from '@/components/NotificationsSection';
+import { TwoFactorSection } from '@/components/TwoFactorSection';
 import type { User } from '@/types';
 import { useT } from '@/lib/i18n';
 
@@ -163,6 +165,12 @@ export default function ProfilePage() {
           onClose={() => setEditAvailability(false)}
         />
       )}
+
+      {/* Push notifications */}
+      <NotificationsSection />
+
+      {/* Two-factor authentication */}
+      <TwoFactorSection />
 
       {/* iCal */}
       <section className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">

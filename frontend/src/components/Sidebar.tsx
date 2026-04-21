@@ -1,22 +1,37 @@
 'use client';
 
+import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
 import clsx from 'clsx';
 
-// Nav entries use translation keys instead of hardcoded labels.  The `useT`
-// hook resolves them at render time so the active locale picks up changes.
-const nav = [
+interface NavItem {
+  href?: string;
+  labelKey: string;
+  icon: React.FC;
+  managerOnly?: boolean;
+  employeeOnly?: boolean;
+  children?: NavItem[];
+}
+
+const nav: NavItem[] = [
   { href: '/dashboard', labelKey: 'nav.overview', icon: HomeIcon },
   { href: '/dashboard/today', labelKey: 'nav.today', icon: SunIcon, employeeOnly: true },
-  { href: '/dashboard/approvals', labelKey: 'nav.approvals', icon: InboxIcon, managerOnly: true },
-  { href: '/dashboard/schedule', labelKey: 'nav.schedule', icon: CalendarIcon },
+  {
+    labelKey: 'nav.schedule',
+    icon: CalendarIcon,
+    children: [
+      { href: '/dashboard/schedule', labelKey: 'nav.calendar', icon: CalendarIcon },
+      { href: '/dashboard/approvals', labelKey: 'nav.approvals', icon: InboxIcon, managerOnly: true },
+      { href: '/dashboard/timeoff', labelKey: 'nav.timeoff', icon: ClockIcon },
+      { href: '/dashboard/open-shifts', labelKey: 'nav.openShifts', icon: OpenShiftIcon },
+      { href: '/dashboard/swaps', labelKey: 'nav.swaps', icon: SwapIcon },
+      { href: '/dashboard/schedule/templates', labelKey: 'nav.templates', icon: ClipboardIcon, managerOnly: true },
+    ],
+  },
   { href: '/dashboard/timeclock', labelKey: 'nav.timeclock', icon: ClockIcon },
   { href: '/dashboard/team', labelKey: 'nav.team', icon: UsersIcon },
-  { href: '/dashboard/timeoff', labelKey: 'nav.timeoff', icon: ClockIcon },
-  { href: '/dashboard/open-shifts', labelKey: 'nav.openShifts', icon: OpenShiftIcon },
-  { href: '/dashboard/swaps', labelKey: 'nav.swaps', icon: SwapIcon },
   { href: '/dashboard/announcements', labelKey: 'nav.announcements', icon: MegaphoneIcon },
   { href: '/dashboard/messages', labelKey: 'nav.messages', icon: ChatIcon },
   { href: '/dashboard/attendance', labelKey: 'nav.attendance', icon: CheckBadgeIcon },
@@ -24,7 +39,7 @@ const nav = [
   { href: '/dashboard/reports', labelKey: 'nav.reports', icon: ChartIcon },
   { href: '/dashboard/audit', labelKey: 'nav.audit', icon: ShieldIcon, managerOnly: true },
   { href: '/dashboard/profile', labelKey: 'nav.profile', icon: UserIcon },
-  { href: '/dashboard/settings', labelKey: 'nav.settings', icon: GearIcon },
+  { href: '/dashboard/settings', labelKey: 'nav.admin', icon: GearIcon, managerOnly: true },
 ];
 
 interface SidebarProps {
@@ -37,6 +52,79 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps = {}) {
   const { user, logout } = useAuth();
   const t = useT();
   const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
+
+  // Auto-open the Schedule dropdown if we're on any child page
+  const scheduleChildPaths = ['/dashboard/schedule', '/dashboard/approvals', '/dashboard/timeoff', '/dashboard/open-shifts', '/dashboard/swaps', '/dashboard/schedule/templates'];
+  const isScheduleActive = scheduleChildPaths.some((p) => pathname.startsWith(p));
+  const [scheduleOpen, setScheduleOpen] = useState(isScheduleActive);
+
+  const isActive = (href: string) =>
+    href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(href);
+
+  const renderItem = (item: NavItem) => {
+    if (item.managerOnly && !isManager) return null;
+    if (item.employeeOnly && isManager) return null;
+
+    // Dropdown parent
+    if (item.children) {
+      const anyChildActive = item.children.some((c) => c.href && isActive(c.href));
+      return (
+        <div key={item.labelKey}>
+          <button
+            onClick={() => setScheduleOpen((v) => !v)}
+            className={clsx(
+              'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition',
+              anyChildActive ? 'text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            )}
+          >
+            <item.icon />
+            <span className="flex-1 text-left">{t(item.labelKey)}</span>
+            <ChevronIcon open={scheduleOpen} />
+          </button>
+          {scheduleOpen && (
+            <div className="ml-4 mt-0.5 space-y-0.5 border-l border-gray-700 pl-2">
+              {item.children.map((child) => {
+                if (child.managerOnly && !isManager) return null;
+                if (child.employeeOnly && isManager) return null;
+                const active = child.href ? isActive(child.href) : false;
+                return (
+                  <a
+                    key={child.href}
+                    href={child.href}
+                    onClick={onClose}
+                    className={clsx(
+                      'flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition',
+                      active ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                    )}
+                  >
+                    <child.icon />
+                    {t(child.labelKey)}
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Regular item
+    const active = item.href ? isActive(item.href) : false;
+    return (
+      <a
+        key={item.href}
+        href={item.href}
+        onClick={onClose}
+        className={clsx(
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition',
+          active ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+        )}
+      >
+        <item.icon />
+        {t(item.labelKey)}
+      </a>
+    );
+  };
 
   return (
     <>
@@ -51,7 +139,6 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps = {}) {
       <aside
         className={clsx(
           'flex h-screen w-56 flex-col bg-gray-900 text-white shrink-0',
-          // mobile: fixed drawer
           'fixed md:static inset-y-0 left-0 z-50 transition-transform duration-200',
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         )}
@@ -70,27 +157,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps = {}) {
       </div>
 
       <nav className="flex-1 space-y-0.5 px-2 py-3 overflow-y-auto">
-        {nav.map((item: any) => {
-          if (item.managerOnly && !isManager) return null;
-          if (item.employeeOnly && isManager) return null;
-          const active = item.href === '/dashboard'
-            ? pathname === '/dashboard'
-            : pathname.startsWith(item.href);
-          return (
-            <a
-              key={item.href}
-              href={item.href}
-              onClick={onClose}
-              className={clsx(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition',
-                active ? 'bg-indigo-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-              )}
-            >
-              <item.icon />
-              {t(item.labelKey)}
-            </a>
-          );
-        })}
+        {nav.map(renderItem)}
       </nav>
 
       <div className="border-t border-gray-800 px-4 py-4">
@@ -105,6 +172,20 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps = {}) {
       </div>
       </aside>
     </>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={clsx('h-3.5 w-3.5 transition-transform', open && 'rotate-90')}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      stroke="currentColor"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+    </svg>
   );
 }
 
@@ -216,6 +297,14 @@ function CheckBadgeIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+    </svg>
+  );
+}
+
+function ClipboardIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z" />
     </svg>
   );
 }
