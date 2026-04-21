@@ -192,69 +192,69 @@ export function WeekCalendar({
   // Drag handlers
   
   const handleDragStart = (e: React.DragEvent, shift: Shift, day: Date) => {
-  const isCopy = e.ctrlKey || e.metaKey;
-  dragDataRef.current = {
-    shiftId: shift.id,
-    sourceUserId: shift.user?.id || null,
-    sourceDate: day.toISOString(),
-    isCopy,
+    const isCopy = e.ctrlKey || e.metaKey;
+    dragDataRef.current = {
+      shiftId: shift.id,
+      sourceUserId: shift.user?.id || null,
+      sourceDate: day.toISOString(),
+      isCopy,
+    };
+    setIsDraggingCopy(isCopy);
+    e.dataTransfer.effectAllowed = isCopy ? 'copy' : 'move';
+    e.dataTransfer.setData('text/plain', shift.id);
   };
-  setIsDraggingCopy(isCopy);
-  e.dataTransfer.effectAllowed = isCopy ? 'copy' : 'move';
-  e.dataTransfer.setData('text/plain', shift.id);
-};
 
-const handleDragEnd = () => {
-  setIsDraggingCopy(false);
-};
+  const handleDragEnd = () => {
+    setIsDraggingCopy(false);
+  };
 
-const handleDragOver = (e: React.DragEvent, cellKey: string) => {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = dragDataRef.current?.isCopy ? 'copy' : 'move';
-  setDragOver(cellKey);
-};
+  const handleDragOver = (e: React.DragEvent, cellKey: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = dragDataRef.current?.isCopy ? 'copy' : 'move';
+    setDragOver(cellKey);
+  };
 
-const handleDragLeave = () => setDragOver(null);
+  const handleDragLeave = () => setDragOver(null);
 
-const handleDrop = async (e: React.DragEvent, targetUserId: string, targetDay: Date) => {
-  e.preventDefault();
-  setDragOver(null);
-  setIsDraggingCopy(false);
-  const drag = dragDataRef.current;
-  if (!drag) return;
-  dragDataRef.current = null;
+  const handleDrop = async (e: React.DragEvent, targetUserId: string, targetDay: Date) => {
+    e.preventDefault();
+    setDragOver(null);
+    setIsDraggingCopy(false);
+    const drag = dragDataRef.current;
+    if (!drag) return;
+    dragDataRef.current = null;
 
-  const shift = shifts.find((s) => s.id === drag.shiftId);
-  if (!shift) return;
+    const shift = shifts.find((s) => s.id === drag.shiftId);
+    if (!shift) return;
 
-  const oldStart = new Date(shift.startTime);
-  const oldEnd = new Date(shift.endTime);
-  const duration = oldEnd.getTime() - oldStart.getTime();
+    const oldStart = new Date(shift.startTime);
+    const oldEnd = new Date(shift.endTime);
+    const duration = oldEnd.getTime() - oldStart.getTime();
 
-  const newStart = new Date(targetDay);
-  newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
-  const newEnd = new Date(newStart.getTime() + duration);
+    const newStart = new Date(targetDay);
+    newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+    const newEnd = new Date(newStart.getTime() + duration);
 
-  const newUserId = targetUserId === '__unassigned__' ? null : targetUserId;
+    const newUserId = targetUserId === '__unassigned__' ? null : targetUserId;
 
-  if (drag.isCopy) {
-    await onCreateShift({
-      startTime: newStart.toISOString(),
-      endTime: newEnd.toISOString(),
-      userId: newUserId,
-      positionId: shift.position?.id ?? null,
-      locationId: shift.location?.id ?? null,
-      notes: shift.notes ?? null,
-      status: 'DRAFT',
-    });
-  } else {
-    await onUpdateShift(drag.shiftId, {
-      startTime: newStart.toISOString(),
-      endTime: newEnd.toISOString(),
-      userId: newUserId,
-    });
-  }
-};
+    if (drag.isCopy) {
+      await onCreateShift({
+        startTime: newStart.toISOString(),
+        endTime: newEnd.toISOString(),
+        userId: newUserId,
+        positionId: shift.position?.id ?? null,
+        locationId: shift.location?.id ?? null,
+        notes: shift.notes ?? null,
+        status: 'DRAFT',
+      });
+    } else {
+      await onUpdateShift(drag.shiftId, {
+        startTime: newStart.toISOString(),
+        endTime: newEnd.toISOString(),
+        userId: newUserId,
+      });
+    }
+  };
 
   return (
     <div>
@@ -363,12 +363,12 @@ const handleDrop = async (e: React.DragEvent, targetUserId: string, targetDay: D
           </button>
         </div>
       </div>
-{isDraggingCopy && (
-  <div className="mb-2 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
-    <span>📋</span>
-    <span>Copy mode — drop on any cell to duplicate this shift there</span>
-  </div>
-)}
+      {isDraggingCopy && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 dark:border-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 animate-pulse">
+          <span>📋</span>
+          <span>Copy mode — drop on any cell to duplicate this shift there</span>
+        </div>
+      )}
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{t('schedule.filters')}</span>
@@ -531,7 +531,7 @@ const handleDrop = async (e: React.DragEvent, targetUserId: string, targetDay: D
                       !holidayName && status === 'available' && 'bg-green-50/40 dark:bg-green-900/10',
                       // Drag-over feedback overrides base tint
                       !holidayName && isOver && !dropConflict && isDraggingCopy && 'bg-emerald-50 ring-2 ring-emerald-400 ring-inset',
-!holidayName && isOver && !dropConflict && !isDraggingCopy && 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset',
+                      !holidayName && isOver && !dropConflict && !isDraggingCopy && 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset',
                       !holidayName && dropConflict && 'bg-red-100 ring-2 ring-red-400 ring-inset'
                     )}
                     onDragOver={(e) => !holidayName && handleDragOver(e, cellKey)}
