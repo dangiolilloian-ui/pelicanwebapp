@@ -1,12 +1,6 @@
 import type { Shift, User, Position, Location } from '@/types';
 import { api } from '@/lib/api';
 
-// Dynamically load SheetJS only when needed (keeps the main bundle small)
-async function loadXLSX() {
-  const XLSX = await import('xlsx');
-  return XLSX;
-}
-
 interface ExportOptions {
   weekStart: Date;
   token: string;
@@ -18,21 +12,26 @@ interface ExportOptions {
   filterLocation: string;
 }
 
-function formatTime12(d: Date): string {
-  let h = d.getHours();
-  const m = d.getMinutes();
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return m === 0 ? `${h} ${ampm}` : `${h}:${String(m).padStart(2, '0')} ${ampm}`;
-}
-
 function addDays(d: Date, n: number): Date {
   const r = new Date(d);
   r.setDate(r.getDate() + n);
   return r;
 }
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** Compact time: 10 AM → "10", 6 PM → "6", 10:30 AM → "10:30" */
+function shortTime(d: Date): string {
+  let h = d.getHours();
+  const m = d.getMinutes();
+  h = h % 12 || 12;
+  return m === 0 ? `${h}` : `${h}:${String(m).padStart(2, '0')}`;
+}
+
+/** "10-6" style compact range */
+function compactRange(start: Date, end: Date): string {
+  return `${shortTime(start)}-${shortTime(end)}`;
+}
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export async function exportScheduleXlsx(opts: ExportOptions) {
   const { weekStart, token, members, filterUser, filterPosition, filterLocation } = opts;
@@ -50,150 +49,226 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
     return true;
   });
 
-  // Build the list of visible employees (same logic as WeekCalendar)
-  const unassigned = { id: '__unassigned__', firstName: 'Unassigned', lastName: '', positions: [], locations: [] } as any;
-  const allRows = [...members, unassigned];
-  const visibleRows = allRows.filter((r: any) => {
-    if (r.id === '__unassigned__') return true;
+  // Visible employees (same logic as WeekCalendar)
+  const visibleRows = members.filter((r) => {
     if (filterUser && r.id !== filterUser) return false;
     if (filterPosition) {
-      const has = (r.positions ?? []).some((p: any) => p.id === filterPosition);
-      if (!has) return false;
+      if (!(r.positions ?? []).some((p) => p.id === filterPosition)) return false;
     }
     if (filterLocation) {
-      const has = (r.locations ?? []).some((l: any) => l.id === filterLocation);
-      if (!has) return false;
+      if (!(r.locations ?? []).some((l) => l.id === filterLocation)) return false;
     }
     return true;
   });
 
-  // Build 21 day columns
+  // 21 day columns
   const days: Date[] = [];
-  for (let i = 0; i < 21; i++) {
-    days.push(addDays(weekStart, i));
-  }
+  for (let i = 0; i < 21; i++) days.push(addDays(weekStart, i));
 
-  // Build header rows
-  // Row 1: "Employee" + week labels spanning 7 cols each
-  // Row 2: "Employee" + day names with dates
-  const XLSX = await loadXLSX();
+  // Dynamically import ExcelJS (keeps main bundle small)
+  const ExcelJS = await import('exceljs');
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Schedule');
 
-  // Build data as array of arrays
-  const data: any[][] = [];
+  // ─── Column widths ───────────────────────────────────────
+  ws.getColumn(1).width = 18.71; // Name column
+  for (let c = 2; c <= 22; c++) ws.getColumn(c).width = 13;
 
-  // Week label row
-  const weekLabelRow: any[] = [''];
+  // ─── Style helpers ───────────────────────────────────────
+  const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
+  const medium = { style: 'medium' as const, color: { argb: 'FF000000' } };
+  const headerFont14 = { name: 'Calibri', size: 14, bold: true };
+  const headerFont14nb = { name: 'Calibri', size: 14, bold: false };
+  const nameFont = { name: 'Calibri', size: 11, bold: true };
+  const dataFont = { name: 'Calibri', size: 11, bold: false };
+  const centerAlign: Partial<import('exceljs').Alignment> = { horizontal: 'center', vertical: 'middle' };
+  const centerContAlign: Partial<import('exceljs').Alignment> = { horizontal: 'centerContinuous', vertical: 'middle' };
+
+  // Helper: date range label
+  const rangeStart = weekStart;
+  const rangeEnd = addDays(weekStart, 20); // Last day of 3rd week
+  const fmtShort = (d: Date) =>
+    `${d.toLocaleString('en-US', { month: 'long' }).toUpperCase()} ${d.getDate()}`;
+
+  const TOTAL_ROWS = 4 + visibleRows.length; // header rows + employee rows
+  const LAST_COL = 22; // V = column 22
+
+  // ─── ROW 1: Date start + WEEK labels ────────────────────
+  const row1 = ws.getRow(1);
+  row1.height = 18.75;
+  const a1 = ws.getCell(1, 1);
+  a1.value = fmtShort(rangeStart);
+  a1.font = { ...headerFont14, color: { argb: 'FFFFFFFF' } };
+  a1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000000' } };
+  a1.alignment = centerAlign;
+  a1.border = { top: medium, left: medium, right: thin };
+
+  // WEEK labels — use centerContinuous across 7 cols each (no merge)
+  const weekStarts = [2, 9, 16]; // columns B, I, P
   for (let w = 0; w < 3; w++) {
-    const wStart = addDays(weekStart, w * 7);
-    const wEnd = addDays(weekStart, w * 7 + 6);
-    const label = `${wStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${wEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-    weekLabelRow.push(label);
-    for (let d = 1; d < 7; d++) weekLabelRow.push('');
+    const col = weekStarts[w];
+    for (let c = col; c < col + 7; c++) {
+      const cell = ws.getCell(1, c);
+      cell.font = headerFont14nb;
+      cell.alignment = centerContAlign;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+      cell.border = {
+        top: medium,
+        bottom: thin,
+        left: c === col && w > 0 ? thin : undefined,
+        right: c === LAST_COL ? medium : undefined,
+      };
+      if (c === col) cell.value = `WEEK ${w + 1}`;
+    }
   }
-  data.push(weekLabelRow);
 
-  // Day header row
-  const dayHeaderRow: any[] = ['Employee'];
-  for (const day of days) {
-    dayHeaderRow.push(`${DAY_NAMES[day.getDay()]} ${day.getMonth() + 1}/${day.getDate()}`);
+  // ─── ROW 2: "TO" + Day names ─────────────────────────────
+  const row2 = ws.getRow(2);
+  row2.height = 18.75;
+  const a2 = ws.getCell(2, 1);
+  a2.value = 'TO';
+  a2.font = { ...headerFont14, color: { argb: 'FFFFFFFF' } };
+  a2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000000' } };
+  a2.alignment = centerAlign;
+  a2.border = { left: medium, right: thin };
+
+  for (let i = 0; i < 21; i++) {
+    const col = i + 2;
+    const cell = ws.getCell(2, col);
+    cell.value = DAY_LABELS[days[i].getDay()];
+    cell.font = headerFont14;
+    cell.alignment = centerAlign;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    cell.border = {
+      bottom: thin,
+      left: thin,
+      right: col === LAST_COL ? medium : thin,
+    };
   }
-  data.push(dayHeaderRow);
 
-  // Employee rows
-  for (const row of visibleRows) {
-    const name = row.id === '__unassigned__' ? 'Unassigned' : `${row.firstName} ${row.lastName}`;
-    const cells: any[] = [name];
-    for (const day of days) {
+  // ─── ROW 3: End date + day-of-month numbers ──────────────
+  const row3 = ws.getRow(3);
+  row3.height = 18.75;
+  const a3 = ws.getCell(3, 1);
+  a3.value = fmtShort(rangeEnd);
+  a3.font = { ...headerFont14, color: { argb: 'FFFFFFFF' } };
+  a3.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000000' } };
+  a3.alignment = centerAlign;
+  a3.border = { bottom: thin, left: medium, right: thin };
+
+  for (let i = 0; i < 21; i++) {
+    const col = i + 2;
+    const cell = ws.getCell(3, col);
+    cell.value = days[i].getDate();
+    cell.font = headerFont14;
+    cell.alignment = centerAlign;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    cell.border = {
+      top: thin,
+      bottom: thin,
+      left: thin,
+      right: col === LAST_COL ? medium : thin,
+    };
+  }
+
+  // ─── ROW 4: "Store Hours" + hours per day ────────────────
+  const row4 = ws.getRow(4);
+  row4.height = 18.75;
+  const a4 = ws.getCell(4, 1);
+  a4.value = 'Store Hours';
+  a4.font = nameFont;
+  a4.alignment = centerAlign;
+  a4.border = { bottom: thin, left: medium, right: thin };
+
+  for (let i = 0; i < 21; i++) {
+    const col = i + 2;
+    const cell = ws.getCell(4, col);
+    // Sunday = "10-5", all other days = "10-6"
+    cell.value = days[i].getDay() === 0 ? '10-5' : '10-6';
+    cell.font = headerFont14;
+    cell.alignment = centerAlign;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    cell.border = {
+      top: thin,
+      bottom: thin,
+      left: thin,
+      right: col === LAST_COL ? medium : thin,
+    };
+  }
+
+  // ─── EMPLOYEE ROWS ───────────────────────────────────────
+  for (let r = 0; r < visibleRows.length; r++) {
+    const emp = visibleRows[r];
+    const rowIdx = 5 + r;
+    const row = ws.getRow(rowIdx);
+    row.height = 21;
+
+    // Name cell
+    const nameCell = ws.getCell(rowIdx, 1);
+    nameCell.value = emp.firstName;
+    nameCell.font = nameFont;
+    nameCell.alignment = centerAlign;
+    const isLast = r === visibleRows.length - 1;
+    nameCell.border = {
+      top: thin,
+      bottom: isLast ? medium : thin,
+      left: medium,
+      right: thin,
+    };
+
+    // Shift cells
+    for (let i = 0; i < 21; i++) {
+      const col = i + 2;
+      const day = days[i];
       const dayKey = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+
       const dayShifts = filtered.filter((s) => {
-        const sid = s.user?.id || '__unassigned__';
+        const sid = s.user?.id;
         const sDate = new Date(s.startTime);
         const sKey = `${sDate.getFullYear()}-${String(sDate.getMonth() + 1).padStart(2, '0')}-${String(sDate.getDate()).padStart(2, '0')}`;
-        return sid === row.id && sKey === dayKey;
+        return sid === emp.id && sKey === dayKey;
       });
 
-      if (dayShifts.length === 0) {
-        cells.push('');
+      const cell = ws.getCell(rowIdx, col);
+      if (dayShifts.length > 0) {
+        cell.value = dayShifts
+          .map((s) => compactRange(new Date(s.startTime), new Date(s.endTime)))
+          .join('\n');
+        cell.alignment = { ...centerAlign, wrapText: true };
       } else {
-        // Multiple shifts in one cell: separate with newline
-        const text = dayShifts
-          .map((s) => {
-            const st = new Date(s.startTime);
-            const et = new Date(s.endTime);
-            let label = `${formatTime12(st)}–${formatTime12(et)}`;
-            if (s.position?.name) label += `\n${s.position.name}`;
-            return label;
-          })
-          .join('\n\n');
-        cells.push(text);
+        cell.alignment = centerAlign;
       }
+      cell.font = dataFont;
+      cell.border = {
+        top: thin,
+        bottom: isLast ? medium : thin,
+        left: thin,
+        right: col === LAST_COL ? medium : thin,
+      };
     }
-    data.push(cells);
   }
 
-  // Build filter description for the header
-  const filterParts: string[] = [];
-  if (filterUser) {
-    const m = members.find((u) => u.id === filterUser);
-    if (m) filterParts.push(`${m.firstName} ${m.lastName}`);
-  }
-  if (filterPosition) {
-    const p = opts.positions.find((x) => x.id === filterPosition);
-    if (p) filterParts.push(p.name);
-  }
-  if (filterLocation) {
-    const l = opts.locations.find((x) => x.id === filterLocation);
-    if (l) filterParts.push(l.name);
-  }
-  const filterLabel = filterParts.length > 0 ? filterParts.join(' · ') : 'All employees';
+  // ─── Print setup ─────────────────────────────────────────
+  ws.pageSetup = {
+    orientation: 'landscape',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    paperSize: 9, // A4
+    printArea: `A1:V${TOTAL_ROWS}`,
+  };
 
-  // Title row at the very top
-  const titleRow = [`Pelican Schedule — ${filterLabel}`];
-  for (let i = 1; i <= 21; i++) titleRow.push('');
-  data.unshift(titleRow);
-
-  // Create workbook
-  const ws = XLSX.utils.aoa_to_sheet(data);
-
-  // Column widths: name col wider, day cols uniform
-  ws['!cols'] = [
-    { wch: 20 }, // Employee name
-    ...Array(21).fill({ wch: 16 }), // Day columns
-  ];
-
-  // Row heights: make data rows taller to fit shift info
-  ws['!rows'] = [
-    { hpt: 24 },  // Title
-    { hpt: 20 },  // Week labels
-    { hpt: 20 },  // Day headers
-    ...Array(visibleRows.length).fill({ hpt: 50 }), // Data rows
-  ];
-
-  // Merge cells for week label row (row index 1 in the sheet = row 2 in data)
-  ws['!merges'] = [
-    // Title row spans all columns
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 21 } },
-    // Week 1 label
-    { s: { r: 1, c: 1 }, e: { r: 1, c: 7 } },
-    // Week 2 label
-    { s: { r: 1, c: 8 }, e: { r: 1, c: 14 } },
-    // Week 3 label
-    { s: { r: 1, c: 15 }, e: { r: 1, c: 21 } },
-  ];
-
-  // Set print area and page setup for landscape, fit to one page wide
-  ws['!printHeader'] = [0, 2]; // Repeat top 3 rows on each page
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Schedule');
-
-  // Write and download
-  const wbOut = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  const blob = new Blob([wbOut], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  // ─── Generate and download ───────────────────────────────
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  const dateLabel = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).replace(/[, ]/g, '-');
+  const dateLabel = weekStart
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    .replace(/[, ]/g, '-');
   link.download = `pelican-schedule-${dateLabel}-3wk.xlsx`;
   document.body.appendChild(link);
   link.click();

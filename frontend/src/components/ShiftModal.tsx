@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { Shift, User, Position, Location } from '@/types';
 import { toDateInputValue, to12h } from '@/lib/dates';
 import { useTemplates } from '@/hooks/useTemplates';
@@ -8,6 +8,14 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useT } from '@/lib/i18n';
 import clsx from 'clsx';
+
+interface AttendanceEvent {
+  id: string;
+  type: 'CALLOUT' | 'LATE' | 'NO_SHOW';
+  notes: string | null;
+  createdAt: string;
+  createdBy: { id: string; firstName: string; lastName: string };
+}
 
 interface Candidate {
   userId: string;
@@ -79,6 +87,46 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
 
+  // ─── Attendance logging (edit mode, managers only) ──────
+  const [attEvents, setAttEvents] = useState<AttendanceEvent[]>([]);
+  const [attType, setAttType] = useState<'CALLOUT' | 'LATE' | 'NO_SHOW'>('CALLOUT');
+  const [attNotes, setAttNotes] = useState('');
+  const [attBusy, setAttBusy] = useState(false);
+
+  const loadAttendance = useCallback(async () => {
+    if (!token || !shift?.id) return;
+    try {
+      const data = await api<AttendanceEvent[]>(`/attendance/shift/${shift.id}`, { token });
+      setAttEvents(data);
+    } catch { /* ignore */ }
+  }, [token, shift?.id]);
+
+  useEffect(() => {
+    if (isEdit && isManager && shift?.user) loadAttendance();
+  }, [isEdit, isManager, shift?.user, loadAttendance]);
+
+  const logAttendance = async () => {
+    if (!token || !shift?.id) return;
+    setAttBusy(true);
+    try {
+      await api(`/attendance/shift/${shift.id}`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ type: attType, notes: attNotes || null }),
+      });
+      setAttNotes('');
+      loadAttendance();
+    } finally {
+      setAttBusy(false);
+    }
+  };
+
+  const removeAttendance = async (id: string) => {
+    if (!token) return;
+    await api(`/attendance/${id}`, { token, method: 'DELETE' });
+    loadAttendance();
+  };
+
   const findCoverage = async () => {
     if (!token || !shift) return;
     setLoadingCandidates(true);
@@ -134,7 +182,7 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-900 p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-900 p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
           {isEdit ? t('shiftModal.editShift') : t('shiftModal.newShift')}
         </h2>
@@ -208,37 +256,55 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
             </select>
           </div>
 
-          {positions.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('shiftModal.position')}</label>
-              <select
-                value={positionId}
-                onChange={(e) => setPositionId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">{t('common.noPosition')}</option>
-                {positions.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {(() => {
+            // When a user is selected and has assigned positions/locations,
+            // only show those — otherwise show the full list.
+            const selectedMember = userId ? members.find((m) => m.id === userId) : null;
+            const memberPositionIds = selectedMember?.positions?.map((p) => p.id) || [];
+            const memberLocationIds = selectedMember?.locations?.map((l) => l.id) || [];
+            const visiblePositions = memberPositionIds.length > 0
+              ? positions.filter((p) => memberPositionIds.includes(p.id))
+              : positions;
+            const visibleLocations = memberLocationIds.length > 0
+              ? locations.filter((l) => memberLocationIds.includes(l.id))
+              : locations;
 
-          {locations.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('shiftModal.location')}</label>
-              <select
-                value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">{t('common.noLocation')}</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+            return (
+              <>
+                {visiblePositions.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('shiftModal.position')}</label>
+                    <select
+                      value={positionId}
+                      onChange={(e) => setPositionId(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">{t('common.noPosition')}</option>
+                      {visiblePositions.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {visibleLocations.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('shiftModal.location')}</label>
+                    <select
+                      value={locationId}
+                      onChange={(e) => setLocationId(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">{t('common.noLocation')}</option>
+                      {visibleLocations.map((l) => (
+                        <option key={l.id} value={l.id}>{l.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('shiftModal.notes')}</label>
@@ -298,6 +364,76 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ─── Attendance Logging ──────────────────────── */}
+          {isEdit && isManager && shift?.user && (
+            <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 text-xs font-semibold text-gray-700 dark:text-gray-300">
+                Attendance
+              </div>
+
+              {/* Existing events */}
+              {attEvents.length > 0 && (
+                <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {attEvents.map((evt) => (
+                    <li key={evt.id} className="flex items-center justify-between px-3 py-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className={clsx(
+                          'inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase',
+                          evt.type === 'CALLOUT' && 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+                          evt.type === 'LATE' && 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+                          evt.type === 'NO_SHOW' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+                        )}>
+                          {evt.type === 'CALLOUT' ? 'Call Out' : evt.type === 'LATE' ? 'Late' : 'No Show'}
+                        </span>
+                        {evt.notes && <span className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[140px]">{evt.notes}</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400">
+                          {evt.createdBy.firstName} {evt.createdBy.lastName[0]}.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeAttendance(evt.id)}
+                          className="text-[10px] text-red-500 hover:text-red-700"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Log new event */}
+              <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-800 flex items-center gap-2">
+                <select
+                  value={attType}
+                  onChange={(e) => setAttType(e.target.value as any)}
+                  className="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900"
+                >
+                  <option value="CALLOUT">Call Out</option>
+                  <option value="LATE">Late Arrival</option>
+                  <option value="NO_SHOW">No Show</option>
+                </select>
+                <input
+                  type="text"
+                  value={attNotes}
+                  onChange={(e) => setAttNotes(e.target.value)}
+                  placeholder="Notes (optional)"
+                  className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={logAttendance}
+                  disabled={attBusy}
+                  className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Log
+                </button>
+              </div>
             </div>
           )}
 

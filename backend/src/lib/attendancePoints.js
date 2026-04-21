@@ -105,6 +105,35 @@ async function computePoints(organizationId) {
     return 'clear';
   };
 
+  // Also include manually logged attendance events from managers.
+  const manualEvents = await prisma.attendanceEvent.findMany({
+    where: {
+      shift: { organizationId },
+      createdAt: { gte: windowStart },
+    },
+    include: {
+      shift: {
+        select: { id: true, startTime: true },
+        include: { user: { select: { id: true, firstName: true, lastName: true } } },
+      },
+    },
+  });
+
+  for (const evt of manualEvents) {
+    if (!evt.shift.user) continue;
+    const kindMap = { CALLOUT: 'noShow', LATE: 'late', NO_SHOW: 'noShow' };
+    const ptsMap = { CALLOUT: config.pointsNoShow, LATE: config.pointsLate, NO_SHOW: config.pointsNoShow };
+    const kind = kindMap[evt.type] || 'noShow';
+    const pts = ptsMap[evt.type] || 0;
+    bump(evt.shift.user, kind, pts, {
+      shiftId: evt.shift.id,
+      startTime: evt.shift.startTime,
+      manual: true,
+      eventType: evt.type,
+      notes: evt.notes,
+    });
+  }
+
   const byEmployee = [...byEmp.values()]
     .map((r) => ({ ...r, status: classify(r.points) }))
     .sort((a, b) => b.points - a.points);

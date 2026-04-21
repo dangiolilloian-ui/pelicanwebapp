@@ -80,6 +80,8 @@ model User {
   locations    Location[]         @relation("UserLocations")
   conversationMemberships ConversationMember[]
   chatMessagesSent        ChatMessage[]
+  attendanceEvents        AttendanceEvent[] @relation("AttendanceEventUser")
+  attendanceEventsCreated AttendanceEvent[] @relation("AttendanceEventCreator")
 
   @@unique([organizationId, pin])
   @@map("users")
@@ -154,6 +156,7 @@ model Shift {
   location     Location?    @relation(fields: [locationId], references: [id])
   swaps        ShiftSwap[]
   claims       ShiftClaim[]
+  attendanceEvents AttendanceEvent[]
 
   @@map("shifts")
 }
@@ -737,4 +740,32 @@ enum IncidentSeverity {
 enum IncidentStatus {
   OPEN
   RESOLVED
+}
+
+// Manual attendance logging by managers. Each record ties to a specific shift
+// and employee, capturing call-outs, late arrivals, and no-shows. These feed
+// into the attendance points dashboard alongside auto-computed points from
+// the timeclock.
+model AttendanceEvent {
+  id          String              @id @default(uuid())
+  shiftId     String              @map("shift_id")
+  userId      String              @map("user_id")
+  type        AttendanceEventType
+  notes       String?
+  createdById String              @map("created_by_id")
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  shift     Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user      User  @relation("AttendanceEventUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User  @relation("AttendanceEventCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([shiftId])
+  @@index([userId])
+  @@map("attendance_events")
+}
+
+enum AttendanceEventType {
+  CALLOUT
+  LATE
+  NO_SHOW
 }

@@ -13,6 +13,19 @@ const nextConfig: NextConfig = {
       { source: '/ical/:path*', destination: `${BACKEND}/ical/:path*` },
     ];
   },
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // ExcelJS imports Node built-ins that don't exist in the browser.
+      // The browser bundle doesn't actually use them, so we can safely stub.
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        stream: false,
+        crypto: false,
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
