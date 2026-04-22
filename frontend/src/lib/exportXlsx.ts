@@ -1,8 +1,10 @@
 import type { Shift, User, Position, Location } from '@/types';
 import { api } from '@/lib/api';
 
-interface ExportOptions {
+export interface ExportOptions {
   weekStart: Date;
+  weeks: 1 | 2 | 3;
+  format: 'excel' | 'pdf' | 'print';
   token: string;
   members: User[];
   positions: Position[];
@@ -33,12 +35,14 @@ function compactRange(start: Date, end: Date): string {
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export async function exportScheduleXlsx(opts: ExportOptions) {
-  const { weekStart, token, members, filterUser, filterPosition, filterLocation } = opts;
+async function buildWorkbook(opts: ExportOptions) {
+  const { weekStart, weeks, token, members, filterUser, filterPosition, filterLocation } = opts;
 
-  // Fetch 3 weeks of shifts
+  const totalDays = weeks * 7;
+
+  // Fetch shifts
   const start = weekStart.toISOString();
-  const end = addDays(weekStart, 21).toISOString();
+  const end = addDays(weekStart, totalDays).toISOString();
   const allShifts = await api<Shift[]>(`/shifts?start=${start}&end=${end}`, { token });
 
   // Apply the same filters as the calendar view
@@ -61,18 +65,20 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
     return true;
   });
 
-  // 21 day columns
+  // Day columns
   const days: Date[] = [];
-  for (let i = 0; i < 21; i++) days.push(addDays(weekStart, i));
+  for (let i = 0; i < totalDays; i++) days.push(addDays(weekStart, i));
 
   // Dynamically import ExcelJS (keeps main bundle small)
   const ExcelJS = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Schedule');
 
+  const LAST_COL = 1 + totalDays; // col 1 = names, then N day cols
+
   // ─── Column widths ───────────────────────────────────────
   ws.getColumn(1).width = 18.71; // Name column
-  for (let c = 2; c <= 22; c++) ws.getColumn(c).width = 13;
+  for (let c = 2; c <= LAST_COL; c++) ws.getColumn(c).width = 13;
 
   // ─── Style helpers ───────────────────────────────────────
   const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
@@ -86,12 +92,11 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
 
   // Helper: date range label
   const rangeStart = weekStart;
-  const rangeEnd = addDays(weekStart, 20); // Last day of 3rd week
+  const rangeEnd = addDays(weekStart, totalDays - 1);
   const fmtShort = (d: Date) =>
     `${d.toLocaleString('en-US', { month: 'long' }).toUpperCase()} ${d.getDate()}`;
 
   const TOTAL_ROWS = 4 + visibleRows.length; // header rows + employee rows
-  const LAST_COL = 22; // V = column 22
 
   // ─── ROW 1: Date start + WEEK labels ────────────────────
   const row1 = ws.getRow(1);
@@ -103,10 +108,9 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
   a1.alignment = centerAlign;
   a1.border = { top: medium, left: medium, right: thin };
 
-  // WEEK labels — use centerContinuous across 7 cols each (no merge)
-  const weekStarts = [2, 9, 16]; // columns B, I, P
-  for (let w = 0; w < 3; w++) {
-    const col = weekStarts[w];
+  // WEEK labels — use centerContinuous across 7 cols each
+  for (let w = 0; w < weeks; w++) {
+    const col = 2 + w * 7;
     for (let c = col; c < col + 7; c++) {
       const cell = ws.getCell(1, c);
       cell.font = headerFont14nb;
@@ -118,7 +122,7 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
         left: c === col && w > 0 ? thin : undefined,
         right: c === LAST_COL ? medium : undefined,
       };
-      if (c === col) cell.value = `WEEK ${w + 1}`;
+      if (c === col) cell.value = weeks === 1 ? '' : `WEEK ${w + 1}`;
     }
   }
 
@@ -132,7 +136,7 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
   a2.alignment = centerAlign;
   a2.border = { left: medium, right: thin };
 
-  for (let i = 0; i < 21; i++) {
+  for (let i = 0; i < totalDays; i++) {
     const col = i + 2;
     const cell = ws.getCell(2, col);
     cell.value = DAY_LABELS[days[i].getDay()];
@@ -156,7 +160,7 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
   a3.alignment = centerAlign;
   a3.border = { bottom: thin, left: medium, right: thin };
 
-  for (let i = 0; i < 21; i++) {
+  for (let i = 0; i < totalDays; i++) {
     const col = i + 2;
     const cell = ws.getCell(3, col);
     cell.value = days[i].getDate();
@@ -180,7 +184,7 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
   a4.alignment = centerAlign;
   a4.border = { bottom: thin, left: medium, right: thin };
 
-  for (let i = 0; i < 21; i++) {
+  for (let i = 0; i < totalDays; i++) {
     const col = i + 2;
     const cell = ws.getCell(4, col);
     // Sunday = "10-5", all other days = "10-6"
@@ -205,7 +209,7 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
 
     // Name cell
     const nameCell = ws.getCell(rowIdx, 1);
-    nameCell.value = emp.firstName;
+    nameCell.value = `${emp.firstName} ${emp.lastName?.charAt(0) || ''}.`;
     nameCell.font = nameFont;
     nameCell.alignment = centerAlign;
     const isLast = r === visibleRows.length - 1;
@@ -217,7 +221,7 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
     };
 
     // Shift cells
-    for (let i = 0; i < 21; i++) {
+    for (let i = 0; i < totalDays; i++) {
       const col = i + 2;
       const day = days[i];
       const dayKey = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
@@ -249,29 +253,113 @@ export async function exportScheduleXlsx(opts: ExportOptions) {
   }
 
   // ─── Print setup ─────────────────────────────────────────
+  const colLetter = String.fromCharCode(64 + LAST_COL > 90 ? 65 : 64 + LAST_COL);
+  // For columns > Z we need AA, AB, etc.
+  const colRef = LAST_COL <= 26
+    ? String.fromCharCode(64 + LAST_COL)
+    : String.fromCharCode(64 + Math.floor((LAST_COL - 1) / 26)) + String.fromCharCode(65 + ((LAST_COL - 1) % 26));
+
   ws.pageSetup = {
     orientation: 'landscape',
     fitToPage: true,
     fitToWidth: 1,
     fitToHeight: 0,
     paperSize: 9, // A4
-    printArea: `A1:V${TOTAL_ROWS}`,
+    printArea: `A1:${colRef}${TOTAL_ROWS}`,
   };
 
-  // ─── Generate and download ───────────────────────────────
-  const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
+  return { wb, totalDays, weeks, weekStart, rangeEnd };
+}
+
+export async function exportSchedule(opts: ExportOptions) {
+  const { format } = opts;
+  const { wb, weeks, weekStart } = await buildWorkbook(opts);
+
   const dateLabel = weekStart
     .toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     .replace(/[, ]/g, '-');
-  link.download = `pelican-schedule-${dateLabel}-3wk.xlsx`;
+  const weekLabel = weeks === 1 ? '1wk' : weeks === 2 ? '2wk' : '3wk';
+
+  if (format === 'excel') {
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    downloadBlob(blob, `pelican-schedule-${dateLabel}-${weekLabel}.xlsx`);
+  } else if (format === 'pdf' || format === 'print') {
+    // Render the workbook into an HTML table, open in a new window, then
+    // trigger print (for "print") or use the browser's "Save as PDF"
+    // print destination (for "pdf"). Both use the same code path since
+    // the browser print dialog handles both.
+    const html = await workbookToHtml(wb);
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    // Give the page a moment to render before triggering print
+    setTimeout(() => w.print(), 400);
+  }
+}
+
+// Keep the old name as an alias for backward compat (won't break anything)
+export const exportScheduleXlsx = (opts: Omit<ExportOptions, 'weeks' | 'format'>) =>
+  exportSchedule({ ...opts, weeks: 3, format: 'excel' });
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+async function workbookToHtml(wb: import('exceljs').Workbook): Promise<string> {
+  const ws = wb.worksheets[0];
+  if (!ws) return '';
+
+  let rows = '';
+  ws.eachRow((row, rowNum) => {
+    let cells = '';
+    row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+      const val = cell.value ?? '';
+      const font = cell.font as any;
+      const fill = cell.fill as any;
+      const align = cell.alignment as any;
+
+      let style = 'padding:4px 6px;border:1px solid #bbb;';
+      if (align?.horizontal === 'center' || align?.horizontal === 'centerContinuous') style += 'text-align:center;';
+      if (font?.bold) style += 'font-weight:600;';
+      if (font?.size) style += `font-size:${font.size}px;`;
+      if (font?.color?.argb) {
+        const c = font.color.argb;
+        style += `color:#${c.length === 8 ? c.slice(2) : c};`;
+      }
+      if (fill?.fgColor?.argb) {
+        const c = fill.fgColor.argb;
+        style += `background:#${c.length === 8 ? c.slice(2) : c};`;
+      }
+      if (align?.wrapText) style += 'white-space:pre-wrap;';
+
+      const tag = rowNum <= 4 ? 'th' : 'td';
+      const display = typeof val === 'object' ? '' : String(val);
+      cells += `<${tag} style="${style}">${display.replace(/\n/g, '<br>')}</${tag}>`;
+    });
+    rows += `<tr>${cells}</tr>`;
+  });
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Schedule</title>
+<style>
+  @page { size: landscape; margin: 0.4in; }
+  @media print { .no-print { display: none !important; } }
+  body { font-family: Calibri, -apple-system, sans-serif; margin: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  .no-print { margin-bottom: 12px; }
+</style></head><body>
+<div class="no-print"><button onclick="window.print()" style="padding:6px 16px;font-size:13px;cursor:pointer;">Print / Save as PDF</button></div>
+<table>${rows}</table>
+</body></html>`;
 }

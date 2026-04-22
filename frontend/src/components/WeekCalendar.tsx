@@ -5,7 +5,6 @@ import type { Shift, User, Position, Location } from '@/types';
 import type { ShiftTemplate } from '@/hooks/useTemplates';
 import { getWeekDays, formatDate, formatTime, isSameDay, addDays, getWeekStart, to12h } from '@/lib/dates';
 import { ShiftModal } from './ShiftModal';
-import { exportShiftsToCSV } from '@/lib/export';
 import { detectConflicts } from '@/lib/conflicts';
 import { getCellStatus, type CellStatus } from '@/lib/availability';
 import type { AvailabilityEntry, TimeOffEntry } from '@/hooks/useAvailability';
@@ -13,7 +12,7 @@ import { useT } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth';
 import clsx from 'clsx';
 import { SearchableSelect } from './SearchableSelect';
-import { exportScheduleXlsx } from '@/lib/exportXlsx';
+import { exportSchedule } from '@/lib/exportXlsx';
 
 interface WeekCalendarProps {
   weekStart: Date;
@@ -143,6 +142,45 @@ export function WeekCalendar({
   const clearSelection = () => setSelected(new Set());
 
   const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  // Close export dropdown on outside click
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExportOpen(false); };
+    document.addEventListener('click', onClick, true);
+    window.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('click', onClick, true); window.removeEventListener('keydown', onKey); };
+  }, [exportOpen]);
+
+  const doExport = async (weeks: 1 | 2 | 3, format: 'excel' | 'pdf' | 'print') => {
+    if (!authToken || exporting) return;
+    setExporting(true);
+    setExportOpen(false);
+    try {
+      await exportSchedule({
+        weekStart,
+        weeks,
+        format,
+        token: authToken,
+        members,
+        positions,
+        locations,
+        filterUser,
+        filterPosition,
+        filterLocation,
+      });
+    } catch (err) {
+      console.error('Export failed', err);
+      showToast('warn', ['Export failed — please try again.']);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Toast / warnings
   const [toast, setToast] = useState<{ kind: 'warn' | 'info'; lines: string[] } | null>(null);
@@ -306,51 +344,51 @@ export function WeekCalendar({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => exportShiftsToCSV(filteredShifts, formatDate(days[0]).replace(/[, ]/g, '-'))}
-            className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
-            title={t('schedule.exportCsvTitle')}
-          >
-            {t('schedule.exportCsv')}
-          </button>
-          <button
-            onClick={async () => {
-              if (!authToken || exporting) return;
-              setExporting(true);
-              try {
-                await exportScheduleXlsx({
-                  weekStart,
-                  token: authToken,
-                  members,
-                  positions,
-                  locations,
-                  filterUser,
-                  filterPosition,
-                  filterLocation,
-                });
-              } catch (err) {
-                console.error('Export failed', err);
-                showToast('warn', ['Excel export failed — please try again.']);
-              } finally {
-                setExporting(false);
-              }
-            }}
-            disabled={exporting}
-            className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-50"
-            title="Export 3-week schedule to Excel (printable)"
-          >
-            {exporting ? 'Exporting…' : '📋 3-Week Excel'}
-          </button>
-          <button
-            onClick={() => {
-              const start = days[0].toISOString();
-              window.open(`/dashboard/schedule/print?start=${encodeURIComponent(start)}`, '_blank');
-            }}
-            className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
-            title={t('schedule.printTitle')}
-          >
-            {t('schedule.print')}
-          </button>
+          {/* Export dropdown */}
+          <div className="relative" ref={exportRef}>
+            <button
+              onClick={() => setExportOpen((v) => !v)}
+              disabled={exporting}
+              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {exporting ? 'Exporting\u2026' : 'Export'}
+              <svg className="h-3.5 w-3.5 opacity-60" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-full mt-1 z-40 w-64 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl overflow-hidden">
+                {([1, 2, 3] as const).map((w) => (
+                  <div key={w}>
+                    <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-gray-400 bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800">
+                      {w} Week{w > 1 ? 's' : ''}
+                    </div>
+                    <button
+                      onClick={() => doExport(w, 'excel')}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition"
+                    >
+                      <span className="text-base leading-none">📊</span>
+                      <span className="text-gray-800 dark:text-gray-200">Excel (.xlsx)</span>
+                    </button>
+                    <button
+                      onClick={() => doExport(w, 'pdf')}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition"
+                    >
+                      <span className="text-base leading-none">📄</span>
+                      <span className="text-gray-800 dark:text-gray-200">PDF (Save as PDF)</span>
+                    </button>
+                    <button
+                      onClick={() => doExport(w, 'print')}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition border-b border-gray-100 dark:border-gray-800 last:border-b-0"
+                    >
+                      <span className="text-base leading-none">🖨️</span>
+                      <span className="text-gray-800 dark:text-gray-200">Print</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             onClick={onCopyWeek}
             className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
