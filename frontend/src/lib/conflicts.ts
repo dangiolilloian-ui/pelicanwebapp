@@ -25,9 +25,15 @@ const BREAK_REQUIRED_HOURS = 6;
  * - OVERTIME: user will hit 40h+ this week (1.5x pay warning)
  * - OVER_HOURS: user scheduled > 50 hours in the week (probably a mistake)
  * - SHORT_REST: <8h gap between consecutive shifts ("clopening")
- * - BREAK_MISSING: single shift longer than 6h (should include a meal break)
+ * - BREAK_MISSING: shift 6+ hours for a minor without a meal break
+ *
+ * @param minorUserIds — set of user IDs flagged as minors. Only these
+ *   employees trigger the BREAK_MISSING conflict.
  */
-export function detectConflicts(shifts: Shift[]): Map<string, ShiftConflict[]> {
+export function detectConflicts(
+  shifts: Shift[],
+  minorUserIds: Set<string> = new Set(),
+): Map<string, ShiftConflict[]> {
   const conflicts = new Map<string, ShiftConflict[]>();
   const add = (id: string, c: ShiftConflict) => {
     const list = conflicts.get(id) || [];
@@ -35,15 +41,16 @@ export function detectConflicts(shifts: Shift[]): Map<string, ShiftConflict[]> {
     conflicts.set(id, list);
   };
 
-  // Break compliance: runs per-shift, not per-user, so unassigned open
-  // shifts also surface the warning at planning time.
+  // Break compliance: only applies to employees flagged as minors.
+  // Minors require a 30-min meal break for any shift 6+ hours.
   for (const s of shifts) {
+    if (!s.user || !minorUserIds.has(s.user.id)) continue;
     const hours =
       (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000;
     if (hours >= BREAK_REQUIRED_HOURS) {
       add(s.id, {
         type: 'BREAK_MISSING',
-        message: `${hours.toFixed(1)}h shift — schedule a meal break`,
+        message: `${hours.toFixed(1)}h shift for a minor — 30-min meal break required`,
       });
     }
   }

@@ -49,6 +49,7 @@ model User {
   pin            String?  // 4-digit kiosk PIN, unique within org
   weeklyHoursCap Int?     @map("weekly_hours_cap") // null = no cap
   birthDate      DateTime? @map("birth_date") @db.Date // used for minor labor compliance
+  isMinor        Boolean   @default(false) @map("is_minor") // Minor (requires meal break): 30-min break every 6h
   // TOTP 2FA: secret is stored base32-encoded and is meaningless until
   // totpEnabled flips true (first successful verify). A user can be in a
   // "set up but not confirmed" state where totpSecret is non-null but

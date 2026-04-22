@@ -238,13 +238,31 @@ export default function TeamPage() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{m.firstName} {m.lastName}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{m.email}</p>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{m.email}</span>
+                    {m.positions && m.positions.length > 0 && m.positions.map((p) => (
+                      <span key={p.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: p.color }} />
+                        {p.name}
+                      </span>
+                    ))}
+                    {m.locations && m.locations.length > 0 && m.locations.map((l) => (
+                      <span key={l.id} className="rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">
+                        {l.name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 {m.pin && (
                   <span className="text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded px-1.5 py-0.5" title={t('team.kioskPinSet')}>
                     PIN
+                  </span>
+                )}
+                {m.isMinor && (
+                  <span className="text-[10px] bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 rounded-full px-2 py-0.5 font-medium">
+                    Minor
                   </span>
                 )}
                 {m.weeklyHoursCap != null && (

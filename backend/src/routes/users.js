@@ -18,7 +18,7 @@ router.get('/', authenticate, async (req, res) => {
     where: { organizationId: req.user.organizationId },
     select: {
       id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
-      employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true,
+      employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true, isMinor: true,
       positions: { select: { id: true, name: true, color: true } },
       locations: { select: { id: true, name: true } },
     },
@@ -150,7 +150,7 @@ router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANA
 
 // Update user
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
-  const { firstName, lastName, phone, role, employmentType, weeklyHoursCap, pin, birthDate, positionIds, locationIds } = req.body;
+  const { firstName, lastName, phone, role, employmentType, weeklyHoursCap, pin, birthDate, isMinor, positionIds, locationIds } = req.body;
 
   // Only the owner can change roles, and nobody can set OWNER
   if (role) {
@@ -227,6 +227,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
         ...(birthDate !== undefined && {
           birthDate: birthDate === null || birthDate === '' ? null : new Date(birthDate),
         }),
+        ...(isMinor !== undefined && { isMinor: !!isMinor }),
         // `set` replaces the whole tag list — pass [] to clear, omit to leave
         // alone. We intentionally don't merge because the UI sends the full
         // intended set (checked boxes) on every save.
@@ -239,7 +240,7 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
       },
       select: {
         id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
-        employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true,
+        employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true, isMinor: true,
         positions: { select: { id: true, name: true, color: true } },
         locations: { select: { id: true, name: true } },
       },

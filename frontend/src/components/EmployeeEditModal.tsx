@@ -40,6 +40,7 @@ interface Props {
     pin?: string | null;
     weeklyHoursCap?: number | null;
     birthDate?: string | null;
+    isMinor?: boolean;
     positionIds?: string[];
     locationIds?: string[];
   }) => Promise<void>;
@@ -55,6 +56,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
   const [pin, setPin] = useState(member.pin || '');
   const [cap, setCap] = useState(member.weeklyHoursCap != null ? String(member.weeklyHoursCap) : '');
   const [dob, setDob] = useState(member.birthDate ? member.birthDate.slice(0, 10) : '');
+  const [minor, setMinor] = useState(member.isMinor ?? false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -189,6 +191,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
         pin: pin === '' ? null : pin,
         weeklyHoursCap: cap === '' ? null : Number(cap),
         birthDate: dob === '' ? null : dob,
+        isMinor: minor,
         positionIds: Array.from(positionIds),
         locationIds: Array.from(locationIds),
       });
@@ -295,6 +298,33 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               {t('employeeEdit.dobHint')}
             </p>
+          </div>
+
+          {/* Minor toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Minor (requires meal break)
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Flags shifts 6+ hours as a conflict if no break is scheduled.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMinor((v) => !v)}
+              className={
+                'relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out cursor-pointer ' +
+                (minor ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-700')
+              }
+            >
+              <span
+                className={
+                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ' +
+                  (minor ? 'translate-x-5' : 'translate-x-0')
+                }
+              />
+            </button>
           </div>
 
           {/* Job positions this employee is trained for. Used by the schedule

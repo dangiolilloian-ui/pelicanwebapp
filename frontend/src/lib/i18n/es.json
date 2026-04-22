@@ -247,6 +247,8 @@
   "schedule.fromRecurringTitle": "Generar borradores desde tus reglas recurrentes",
   "schedule.exitSelect": "Salir de selecci\u00f3n",
   "schedule.select": "Seleccionar",
+  "schedule.selectAll": "Seleccionar todo",
+  "schedule.deselectAll": "Deseleccionar todo",
   "schedule.publishWeek": "Publicar semana",
   "schedule.newShift": "+ Nuevo turno",
   "schedule.filters": "Filtros:",

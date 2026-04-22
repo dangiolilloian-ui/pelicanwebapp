@@ -247,6 +247,8 @@
   "schedule.fromRecurringTitle": "Generate draft shifts from your recurring rules",
   "schedule.exitSelect": "Exit select",
   "schedule.select": "Select",
+  "schedule.selectAll": "Select All",
+  "schedule.deselectAll": "Deselect All",
   "schedule.publishWeek": "Publish Week",
   "schedule.newShift": "+ New Shift",
   "schedule.filters": "Filters:",

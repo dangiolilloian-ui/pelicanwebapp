@@ -213,7 +213,11 @@ export function WeekCalendar({
   const [filterLocation, setFilterLocation] = useState('');
 
   const hasDrafts = shifts.some((s) => s.status === 'DRAFT');
-  const conflicts = useMemo(() => detectConflicts(shifts), [shifts]);
+  const minorUserIds = useMemo(
+    () => new Set(members.filter((m) => m.isMinor).map((m) => m.id)),
+    [members],
+  );
+  const conflicts = useMemo(() => detectConflicts(shifts, minorUserIds), [shifts, minorUserIds]);
   const conflictCount = conflicts.size;
   const [conflictsOpen, setConflictsOpen] = useState(false);
 
@@ -456,6 +460,17 @@ export function WeekCalendar({
           >
             {selectMode ? t('schedule.exitSelect') : t('schedule.select')}
           </button>
+          {selectMode && (
+            <button
+              onClick={() => {
+                const allIds = shifts.map((s) => s.id);
+                setSelected((prev) => prev.size === allIds.length ? new Set() : new Set(allIds));
+              }}
+              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+            >
+              {selected.size === shifts.length ? t('schedule.deselectAll') : t('schedule.selectAll')}
+            </button>
+          )}
           {hasDrafts && (
             <button
               onClick={async () => {

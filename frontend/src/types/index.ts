@@ -14,6 +14,7 @@ export interface User {
   pin?: string | null;
   icalToken?: string | null;
   birthDate?: string | null;
+  isMinor?: boolean;
   positions?: Pick<Position, 'id' | 'name' | 'color'>[];
   locations?: Pick<Location, 'id' | 'name'>[];
 }
