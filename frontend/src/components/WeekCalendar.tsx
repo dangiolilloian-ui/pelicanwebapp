@@ -220,11 +220,19 @@ export function WeekCalendar({
   const conflicts = useMemo(() => detectConflicts(shifts, minorUserIds), [shifts, minorUserIds]);
   const conflictCount = conflicts.size;
   const [conflictsOpen, setConflictsOpen] = useState(false);
+  const conflictsPanelRef = useRef<HTMLDivElement>(null);
 
   // Auto-close the panel when all conflicts are resolved
   useEffect(() => {
     if (conflictCount === 0) setConflictsOpen(false);
   }, [conflictCount]);
+
+  // Auto-scroll to the conflicts panel when it opens
+  useEffect(() => {
+    if (conflictsOpen && conflictsPanelRef.current) {
+      conflictsPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [conflictsOpen]);
 
   // Build rows: one per member + unassigned
   const unassignedRow = { id: '__unassigned__', firstName: 'Unassigned', lastName: '', email: '', role: 'EMPLOYEE' as const };
@@ -934,7 +942,7 @@ export function WeekCalendar({
         };
 
         return (
-          <div className="mt-4 rounded-xl border border-red-200 dark:border-red-800 bg-white dark:bg-gray-900 overflow-hidden shadow-sm">
+          <div ref={conflictsPanelRef} className="mt-4 rounded-xl border border-red-200 dark:border-red-800 bg-white dark:bg-gray-900 overflow-hidden shadow-sm">
             <div className="flex items-center justify-between px-4 py-3 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800">
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
