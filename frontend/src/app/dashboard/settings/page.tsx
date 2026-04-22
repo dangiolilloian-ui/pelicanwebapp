@@ -11,6 +11,7 @@ import { PtoConfigSection } from '@/components/PtoConfigSection';
 import { CoverageRequirementsSection } from '@/components/CoverageRequirementsSection';
 import { HolidaysSection } from '@/components/HolidaysSection';
 import { OnboardingSection } from '@/components/OnboardingSection';
+import { DeptManagersSection } from '@/components/DeptManagersSection';
 import type { Position, Location } from '@/types';
 
 export default function AdminPage() {
@@ -20,7 +21,7 @@ export default function AdminPage() {
 
   const [positions, setPositions] = useState<Position[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
-  const [newPos, setNewPos] = useState({ name: '', color: '#6366f1', hourlyRate: 15 });
+  const [newPos, setNewPos] = useState({ name: '', color: '#6366f1', hourlyRate: 16 });
   const [newLoc, setNewLoc] = useState({ name: '', address: '' });
 
   const fetchAll = useCallback(async () => {
@@ -39,7 +40,7 @@ export default function AdminPage() {
     e.preventDefault();
     if (!token || !newPos.name) return;
     await api('/positions', { token, method: 'POST', body: JSON.stringify(newPos) });
-    setNewPos({ name: '', color: '#6366f1', hourlyRate: 15 });
+    setNewPos({ name: '', color: '#6366f1', hourlyRate: 16 });
     fetchAll();
   };
 
@@ -97,12 +98,13 @@ export default function AdminPage() {
                 $
                 <input
                   type="number"
-                  min="0"
+                  min="16"
                   step="0.5"
-                  defaultValue={(p as any).hourlyRate ?? 15}
+                  defaultValue={(p as any).hourlyRate ?? 16}
                   onBlur={(e) => {
-                    const v = parseFloat(e.target.value);
-                    if (!isNaN(v) && v !== ((p as any).hourlyRate ?? 15)) updatePositionRate(p.id, v);
+                    const v = Math.max(parseFloat(e.target.value) || 16, 16);
+                    e.target.value = String(v);
+                    if (v !== ((p as any).hourlyRate ?? 16)) updatePositionRate(p.id, v);
                   }}
                   className="w-16 rounded border border-gray-300 dark:border-gray-700 px-1.5 py-0.5 text-xs text-right tabular-nums"
                 />
@@ -116,8 +118,8 @@ export default function AdminPage() {
               className="h-8 w-8 rounded border border-gray-300 dark:border-gray-700 cursor-pointer" />
             <input type="text" required value={newPos.name} onChange={(e) => setNewPos({ ...newPos, name: e.target.value })}
               placeholder={t('settings.newPositionName')} className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            <input type="number" min="0" step="0.5" value={newPos.hourlyRate}
-              onChange={(e) => setNewPos({ ...newPos, hourlyRate: parseFloat(e.target.value) || 0 })}
+            <input type="number" min="16" step="0.5" value={newPos.hourlyRate}
+              onChange={(e) => setNewPos({ ...newPos, hourlyRate: Math.max(parseFloat(e.target.value) || 16, 16) })}
               placeholder={t('settings.dollarPerHour')} className="w-20 rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <button type="submit" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 transition">{t('common.add')}</button>
           </form>
@@ -144,6 +146,7 @@ export default function AdminPage() {
         </div>
       </section>
 
+      <DeptManagersSection />
       <ChecklistsSection />
       <CertificationsSection />
       <AttendanceConfigSection />

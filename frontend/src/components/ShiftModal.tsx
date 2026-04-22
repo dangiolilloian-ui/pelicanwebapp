@@ -91,6 +91,7 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
   const [attEvents, setAttEvents] = useState<AttendanceEvent[]>([]);
   const [attType, setAttType] = useState<'CALLOUT' | 'LATE' | 'NO_SHOW'>('CALLOUT');
   const [attNotes, setAttNotes] = useState('');
+  const [attLateMinutes, setAttLateMinutes] = useState('');
   const [attBusy, setAttBusy] = useState(false);
 
   const loadAttendance = useCallback(async () => {
@@ -109,12 +110,19 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
     if (!token || !shift?.id) return;
     setAttBusy(true);
     try {
+      // For LATE events, prepend the minutes late to the notes
+      let finalNotes = attNotes || '';
+      if (attType === 'LATE' && attLateMinutes) {
+        const prefix = `${attLateMinutes} min late`;
+        finalNotes = finalNotes ? `${prefix} — ${finalNotes}` : prefix;
+      }
       await api(`/attendance/shift/${shift.id}`, {
         token,
         method: 'POST',
-        body: JSON.stringify({ type: attType, notes: attNotes || null }),
+        body: JSON.stringify({ type: attType, notes: finalNotes || null }),
       });
       setAttNotes('');
+      setAttLateMinutes('');
       loadAttendance();
     } finally {
       setAttBusy(false);
@@ -408,31 +416,48 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
               )}
 
               {/* Log new event */}
-              <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-800 flex items-center gap-2">
-                <select
-                  value={attType}
-                  onChange={(e) => setAttType(e.target.value as any)}
-                  className="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900"
-                >
-                  <option value="CALLOUT">Call Out</option>
-                  <option value="LATE">Late Arrival</option>
-                  <option value="NO_SHOW">No Show</option>
-                </select>
-                <input
-                  type="text"
-                  value={attNotes}
-                  onChange={(e) => setAttNotes(e.target.value)}
-                  placeholder="Notes (optional)"
-                  className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900"
-                />
-                <button
-                  type="button"
-                  onClick={logAttendance}
-                  disabled={attBusy}
-                  className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  Log
-                </button>
+              <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-800 space-y-2">
+                <div className="flex items-center gap-2">
+                  <select
+                    value={attType}
+                    onChange={(e) => { setAttType(e.target.value as any); setAttLateMinutes(''); }}
+                    className="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900"
+                  >
+                    <option value="CALLOUT">Call Out</option>
+                    <option value="LATE">Late Arrival</option>
+                    <option value="NO_SHOW">No Show</option>
+                  </select>
+                  {attType === 'LATE' && (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="1"
+                        value={attLateMinutes}
+                        onChange={(e) => setAttLateMinutes(e.target.value)}
+                        placeholder="min"
+                        className="w-14 rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900 text-center"
+                      />
+                      <span className="text-[10px] text-gray-400">min late</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={attNotes}
+                    onChange={(e) => setAttNotes(e.target.value)}
+                    placeholder="Notes (optional)"
+                    className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs bg-white dark:bg-gray-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={logAttendance}
+                    disabled={attBusy}
+                    className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    Log
+                  </button>
+                </div>
               </div>
             </div>
           )}

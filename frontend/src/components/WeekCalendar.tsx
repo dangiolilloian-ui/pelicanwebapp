@@ -5,7 +5,7 @@ import type { Shift, User, Position, Location } from '@/types';
 import type { ShiftTemplate } from '@/hooks/useTemplates';
 import { getWeekDays, formatDate, formatTime, isSameDay, addDays, getWeekStart, to12h } from '@/lib/dates';
 import { ShiftModal } from './ShiftModal';
-import { detectConflicts } from '@/lib/conflicts';
+import { detectConflicts, type ShiftConflict } from '@/lib/conflicts';
 import { getCellStatus, type CellStatus } from '@/lib/availability';
 import type { AvailabilityEntry, TimeOffEntry } from '@/hooks/useAvailability';
 import { useT } from '@/lib/i18n';
@@ -118,12 +118,23 @@ export function WeekCalendar({
     // Handles templates that cross midnight (e.g. 22:00–02:00 closer shift).
     if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
     setQuickAdd(null);
+
+    // Auto-fill position/location from the employee if the template doesn't
+    // specify one and the employee has exactly one assigned.
+    let posId = tpl.position?.id ?? null;
+    let locId = tpl.location?.id ?? null;
+    if (userId) {
+      const member = members.find((m) => m.id === userId);
+      if (!posId && member?.positions?.length === 1) posId = member.positions[0].id;
+      if (!locId && member?.locations?.length === 1) locId = member.locations[0].id;
+    }
+
     await handleSave({
       startTime: start.toISOString(),
       endTime: end.toISOString(),
       userId: userId ?? null,
-      positionId: tpl.position?.id ?? null,
-      locationId: tpl.location?.id ?? null,
+      positionId: posId,
+      locationId: locId,
       notes: tpl.notes ?? null,
       status: 'DRAFT',
     });
@@ -204,6 +215,12 @@ export function WeekCalendar({
   const hasDrafts = shifts.some((s) => s.status === 'DRAFT');
   const conflicts = useMemo(() => detectConflicts(shifts), [shifts]);
   const conflictCount = conflicts.size;
+  const [conflictsOpen, setConflictsOpen] = useState(false);
+
+  // Auto-close the panel when all conflicts are resolved
+  useEffect(() => {
+    if (conflictCount === 0) setConflictsOpen(false);
+  }, [conflictCount]);
 
   // Build rows: one per member + unassigned
   const unassignedRow = { id: '__unassigned__', firstName: 'Unassigned', lastName: '', email: '', role: 'EMPLOYEE' as const };
@@ -340,6 +357,21 @@ export function WeekCalendar({
             className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition"
           >
             {t('common.today')}
+          </button>
+          <button
+            onClick={() => {
+              if (authUser?.id) {
+                setFilterUser((prev) => prev === authUser.id ? '' : authUser.id);
+              }
+            }}
+            className={clsx(
+              'rounded-lg border px-3 py-1.5 text-sm font-medium transition',
+              filterUser === authUser?.id
+                ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-600'
+                : 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+            )}
+          >
+            My Schedule
           </button>
         </div>
 
@@ -661,7 +693,7 @@ export function WeekCalendar({
                         }}
                         title={shiftConflicts?.map((c) => c.message).join(' · ')}
                         className={clsx(
-                          'relative rounded px-1.5 py-1 text-[11px] mb-0.5 transition',
+                          'group/shift relative rounded px-1.5 py-1 text-[11px] mb-0.5 transition',
                           selectMode ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing hover:ring-2 hover:ring-indigo-300',
                           isSelected && 'ring-2 ring-indigo-500',
                           hardConflict
@@ -686,6 +718,19 @@ export function WeekCalendar({
                         )}
                         {softConflict && (
                           <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-amber-500 text-white text-[8px] flex items-center justify-center font-bold" title="Overtime">⏱</span>
+                        )}
+                        {!selectMode && !hardConflict && !softConflict && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm('Delete this shift?')) onDeleteShift(shift.id);
+                            }}
+                            className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-red-500 text-white text-[9px] items-center justify-center font-bold opacity-0 group-hover/shift:opacity-100 transition-opacity hidden group-hover/shift:flex"
+                            title="Delete shift"
+                          >
+                            ✕
+                          </button>
                         )}
                         <div className="font-medium">
                           {formatTime(shift.startTime)} – {formatTime(shift.endTime)}
@@ -818,11 +863,131 @@ export function WeekCalendar({
             <span>{t('schedule.statsDrafts', { n: filteredShifts.filter((s) => s.status === 'DRAFT').length })}</span>
             <span>{t('schedule.statsUnassigned', { n: filteredShifts.filter((s) => !s.user).length })}</span>
             {conflictCount > 0 && (
-              <span className="flex items-center gap-1 text-red-600 font-medium">
+              <button
+                onClick={() => setConflictsOpen((v) => !v)}
+                className="flex items-center gap-1 text-red-600 font-medium hover:text-red-700 hover:underline transition"
+              >
                 <span className="h-2 w-2 rounded-full bg-red-500" />
                 {t('schedule.statsConflicts', { n: conflictCount })}
-              </span>
+              </button>
             )}
+          </div>
+        );
+      })()}
+
+      {/* Conflicts Panel */}
+      {conflictsOpen && conflictCount > 0 && (() => {
+        // Build a list of conflict entries grouped by employee
+        type ConflictEntry = { shift: Shift; conflicts: ShiftConflict[] };
+        type EmployeeGroup = { name: string; entries: ConflictEntry[] };
+        const groupMap = new Map<string, EmployeeGroup>();
+
+        for (const [shiftId, shiftConflicts] of conflicts) {
+          const shift = shifts.find((s) => s.id === shiftId);
+          if (!shift) continue;
+          const uid = shift.user?.id || '__unassigned__';
+          const name = shift.user ? `${shift.user.firstName} ${shift.user.lastName}` : 'Unassigned';
+          if (!groupMap.has(uid)) groupMap.set(uid, { name, entries: [] });
+          // Dedupe — the same shift might appear in the map once already
+          const group = groupMap.get(uid)!;
+          if (!group.entries.some((e) => e.shift.id === shiftId)) {
+            group.entries.push({ shift, conflicts: shiftConflicts });
+          }
+        }
+
+        const groups = [...groupMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+        const typeLabel = (t: ShiftConflict['type']) => {
+          switch (t) {
+            case 'OVERLAP': return 'Overlap';
+            case 'SHORT_REST': return 'Short Rest';
+            case 'OVER_HOURS': return 'Over 50h';
+            case 'OVERTIME': return 'Overtime';
+            case 'BREAK_MISSING': return 'No Break';
+          }
+        };
+        const typeBadgeClass = (t: ShiftConflict['type']) => {
+          switch (t) {
+            case 'OVERLAP':
+            case 'SHORT_REST':
+            case 'OVER_HOURS':
+              return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+            case 'OVERTIME':
+            case 'BREAK_MISSING':
+              return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300';
+          }
+        };
+
+        return (
+          <div className="mt-4 rounded-xl border border-red-200 dark:border-red-800 bg-white dark:bg-gray-900 overflow-hidden shadow-sm">
+            <div className="flex items-center justify-between px-4 py-3 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
+                <span className="text-sm font-semibold text-red-800 dark:text-red-200">
+                  {conflictCount} Conflict{conflictCount !== 1 ? 's' : ''} Found
+                </span>
+              </div>
+              <button
+                onClick={() => setConflictsOpen(false)}
+                className="text-sm text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-[400px] overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+              {groups.map((group) => (
+                <div key={group.name}>
+                  <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/60 text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+                    {group.name}
+                  </div>
+                  {group.entries.map(({ shift: s, conflicts: cs }) => (
+                    <div key={s.id} className="px-4 py-3 flex items-start justify-between gap-3 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {formatDate(new Date(s.startTime))}
+                          </span>
+                          <span className="text-sm text-gray-500 dark:text-gray-400">
+                            {formatTime(s.startTime)} – {formatTime(s.endTime)}
+                          </span>
+                          {s.position && (
+                            <span className="flex items-center gap-1 text-xs text-gray-500">
+                              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: s.position.color }} />
+                              {s.position.name}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {cs.map((c, i) => (
+                            <span key={i} className="inline-flex items-center gap-1">
+                              <span className={clsx('inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold', typeBadgeClass(c.type))}>
+                                {typeLabel(c.type)}
+                              </span>
+                              <span className="text-[11px] text-gray-500 dark:text-gray-400">{c.message}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                        <button
+                          onClick={() => { setConflictsOpen(false); setModal({ shift: s }); }}
+                          className="rounded-lg border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={async () => { if (confirm('Delete this shift?')) await onDeleteShift(s.id); }}
+                          className="rounded-lg border border-red-300 dark:border-red-700 px-2.5 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         );
       })()}

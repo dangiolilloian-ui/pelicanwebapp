@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { notify, notifyMany } = require('../lib/notify');
+const { getDeptManagers } = require('../lib/deptManagers');
 
 const router = Router();
 
@@ -70,20 +71,19 @@ router.post('/', authenticate, async (req, res) => {
       link: '/dashboard/swaps',
     });
   } else {
-    // Notify managers so they see open swap market
-    const managers = await prisma.user.findMany({
-      where: { organizationId: req.user.organizationId, role: { in: ['OWNER', 'MANAGER'] } },
-      select: { id: true },
+    // Notify department managers (or owners as fallback)
+    const managerIds = await getDeptManagers(req.user.organizationId, {
+      employeeId: req.user.id,
+      positionIds: shift.positionId ? [shift.positionId] : [],
+      locationIds: shift.locationId ? [shift.locationId] : [],
+      excludeUserId: req.user.id,
     });
-    await notifyMany(
-      managers.map((m) => m.id),
-      {
-        type: 'SWAP_PROPOSED',
-        title: 'Open shift swap',
-        body: `${swap.requester.firstName} ${swap.requester.lastName} is offering a shift.`,
-        link: '/dashboard/swaps',
-      }
-    );
+    await notifyMany(managerIds, {
+      type: 'SWAP_PROPOSED',
+      title: 'Open shift swap',
+      body: `${swap.requester.firstName} ${swap.requester.lastName} is offering a shift.`,
+      link: '/dashboard/swaps',
+    });
   }
 
   res.status(201).json(swap);
@@ -104,26 +104,24 @@ router.post('/:id/accept', authenticate, async (req, res) => {
     include: includeAll,
   });
 
-  // Notify requester + managers
+  // Notify requester + department managers
   await notify(swap.requesterId, {
     type: 'SWAP_ACCEPTED',
     title: 'Swap accepted',
     body: 'A coworker accepted your swap. Waiting for manager approval.',
     link: '/dashboard/swaps',
   });
-  const managers = await prisma.user.findMany({
-    where: { organizationId: req.user.organizationId, role: { in: ['OWNER', 'MANAGER'] } },
-    select: { id: true },
+  const managerIds = await getDeptManagers(req.user.organizationId, {
+    employeeId: swap.requesterId,
+    positionIds: swap.shift?.position?.id ? [swap.shift.position.id] : [],
+    locationIds: swap.shift?.location?.id ? [swap.shift.location.id] : [],
   });
-  await notifyMany(
-    managers.map((m) => m.id),
-    {
-      type: 'SWAP_PENDING_APPROVAL',
-      title: 'Swap pending approval',
-      body: 'A shift swap needs your approval.',
-      link: '/dashboard/swaps',
-    }
-  );
+  await notifyMany(managerIds, {
+    type: 'SWAP_PENDING_APPROVAL',
+    title: 'Swap pending approval',
+    body: 'A shift swap needs your approval.',
+    link: '/dashboard/swaps',
+  });
 
   res.json(updated);
 });

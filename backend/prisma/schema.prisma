@@ -78,6 +78,12 @@ model User {
   // location — independently of what shifts they happen to be on this week.
   positions    Position[]         @relation("UserPositions")
   locations    Location[]         @relation("UserLocations")
+  // Department management: a MANAGER/ADMIN/OWNER can be assigned to oversee
+  // specific positions and/or locations. Notifications for time-off, swaps,
+  // and open shifts route to these managers first. Falls back to owners if
+  // no department manager is assigned.
+  managedPositions Position[]     @relation("PositionManagers")
+  managedLocations Location[]     @relation("LocationManagers")
   conversationMemberships ConversationMember[]
   chatMessagesSent        ChatMessage[]
   attendanceEvents        AttendanceEvent[] @relation("AttendanceEventUser")
@@ -110,6 +116,7 @@ model Position {
   shifts       Shift[]
   shiftTemplates ShiftTemplate[]
   assignedUsers User[] @relation("UserPositions")
+  managers     User[] @relation("PositionManagers")
 
   @@map("positions")
 }
@@ -128,6 +135,7 @@ model Location {
   shifts       Shift[]
   shiftTemplates ShiftTemplate[]
   assignedUsers User[] @relation("UserLocations")
+  managers     User[] @relation("LocationManagers")
 
   @@map("locations")
 }

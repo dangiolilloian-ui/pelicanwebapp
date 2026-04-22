@@ -12,13 +12,16 @@ router.get('/', authenticate, async (req, res) => {
   res.json(positions);
 });
 
+const MIN_WAGE = 16;
+
 router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, color, hourlyRate } = req.body;
+  const rate = hourlyRate != null ? Math.max(Number(hourlyRate), MIN_WAGE) : MIN_WAGE;
   const position = await prisma.position.create({
     data: {
       name,
       color: color || '#6366f1',
-      hourlyRate: hourlyRate != null ? Number(hourlyRate) : 15,
+      hourlyRate: rate,
       organizationId: req.user.organizationId,
     },
   });
@@ -27,12 +30,13 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
 
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { name, color, hourlyRate } = req.body;
+  const rate = hourlyRate != null ? Math.max(Number(hourlyRate), MIN_WAGE) : undefined;
   const position = await prisma.position.update({
     where: { id: req.params.id },
     data: {
       ...(name && { name }),
       ...(color && { color }),
-      ...(hourlyRate != null && { hourlyRate: Number(hourlyRate) }),
+      ...(rate != null && { hourlyRate: rate }),
     },
   });
   res.json(position);

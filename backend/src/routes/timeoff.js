@@ -4,6 +4,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const { audit } = require('../lib/audit');
 const { recordConsumeForTimeoff, getBalance, getConfig } = require('../lib/pto');
 const { notify, notifyMany } = require('../lib/notify');
+const { getDeptManagers } = require('../lib/deptManagers');
 
 const router = Router();
 
@@ -47,16 +48,12 @@ router.post('/', authenticate, async (req, res) => {
     include: { user: { select: { id: true, firstName: true, lastName: true } } },
   });
 
-  // Notify managers/owners
-  const managers = await prisma.user.findMany({
-    where: {
-      organizationId: req.user.organizationId,
-      role: { in: ['OWNER', 'MANAGER'] },
-      id: { not: req.user.id },
-    },
-    select: { id: true },
+  // Notify department managers (or owners as fallback)
+  const managerIds = await getDeptManagers(req.user.organizationId, {
+    employeeId: req.user.id,
+    excludeUserId: req.user.id,
   });
-  await notifyMany(managers.map((m) => m.id), {
+  await notifyMany(managerIds, {
     type: 'TIMEOFF_REQUESTED',
     title: 'New time-off request',
     body: `${request.user.firstName} ${request.user.lastName} requested time off`,
