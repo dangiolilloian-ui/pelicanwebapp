@@ -65,7 +65,7 @@ export function WeekCalendar({
   holidays = new Map(),
 }: WeekCalendarProps) {
   const t = useT();
-  const { token: authToken } = useAuth();
+  const { token: authToken, user: authUser } = useAuth();
   const days = getWeekDays(weekStart);
 
   // Holiday lookup helper
