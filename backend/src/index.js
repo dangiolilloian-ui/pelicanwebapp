@@ -58,13 +58,12 @@ const PORT = process.env.PORT || 4000;
 // X-Forwarded-For header.  Trust the first hop so req.ip (used by the rate
 // limiter on /auth/login) reflects the actual browser, not the proxy.
 app.set('trust proxy', 1);
-const path = require('path');
 
 app.use(cors());
 app.use(express.json());
 
-// Serve uploaded chat attachments
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+// Chat file attachments are now served from the database via
+// GET /api/conversations/:id/messages/:msgId/file
 
 // Make io accessible to route handlers
 app.set('io', io);

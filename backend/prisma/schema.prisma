@@ -610,6 +610,7 @@ model ChatMessage {
   fileName       String?  @map("file_name")
   fileType       String?  @map("file_type")
   fileSize       Int?     @map("file_size")
+  fileData       Bytes?   @map("file_data")
   createdAt      DateTime @default(now()) @map("created_at")
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

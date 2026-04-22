@@ -1,28 +1,14 @@
 const { Router } = require('express');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { pushToUsers } = require('../lib/webpush');
 
 const router = Router();
 
-// ─── File upload config ────────────────────────────────────────────
-const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads', 'chat');
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${crypto.randomUUID()}${ext}`);
-  },
-});
-
+// ─── File upload config (memory storage → saved to DB) ─────────────
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
   fileFilter: (_req, file, cb) => {
     // Allow images, PDFs, common docs, and text
@@ -286,6 +272,7 @@ router.get('/:id/messages', authenticate, async (req, res) => {
     where,
     orderBy: { createdAt: 'desc' },
     take: limit,
+    omit: { fileData: true }, // don't send binary blobs in listing
     include: {
       sender: { select: { id: true, firstName: true, lastName: true } },
     },
@@ -325,21 +312,33 @@ router.post('/:id/messages', authenticate, upload.single('file'), async (req, re
     content: content.trim() || (req.file ? '' : ''),
   };
 
-  // Attach file info if uploaded
+  // Attach file info if uploaded — binary stored in DB
   if (req.file) {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    messageData.fileUrl = `${baseUrl}/uploads/chat/${req.file.filename}`;
     messageData.fileName = req.file.originalname;
     messageData.fileType = req.file.mimetype;
     messageData.fileSize = req.file.size;
+    messageData.fileData = req.file.buffer;
+    // fileUrl will be set after we know the message ID
   }
 
-  const message = await prisma.chatMessage.create({
+  let message = await prisma.chatMessage.create({
     data: messageData,
+    omit: { fileData: true },
     include: {
       sender: { select: { id: true, firstName: true, lastName: true } },
     },
   });
+
+  // Set the fileUrl now that we have the message ID
+  if (req.file) {
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const fileUrl = `${baseUrl}/api/conversations/${conversationId}/messages/${message.id}/file`;
+    await prisma.chatMessage.update({
+      where: { id: message.id },
+      data: { fileUrl },
+    });
+    message = { ...message, fileUrl };
+  }
 
   // Update conversation timestamp so it sorts to top
   await prisma.conversation.update({
@@ -398,6 +397,34 @@ router.post('/:id/messages', authenticate, upload.single('file'), async (req, re
   }
 
   res.status(201).json(message);
+});
+
+// ─── Serve a file attachment from the database ─────────────────────
+
+router.get('/:id/messages/:msgId/file', authenticate, async (req, res) => {
+  const { id: conversationId, msgId } = req.params;
+
+  // Verify membership
+  const membership = await prisma.conversationMember.findUnique({
+    where: { conversationId_userId: { conversationId, userId: req.user.id } },
+  });
+  if (!membership) {
+    return res.status(403).json({ error: 'Not a member of this conversation' });
+  }
+
+  const message = await prisma.chatMessage.findUnique({
+    where: { id: msgId },
+    select: { conversationId: true, fileData: true, fileName: true, fileType: true, fileSize: true },
+  });
+
+  if (!message || message.conversationId !== conversationId || !message.fileData) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+
+  res.set('Content-Type', message.fileType || 'application/octet-stream');
+  res.set('Content-Length', message.fileSize);
+  res.set('Content-Disposition', `inline; filename="${encodeURIComponent(message.fileName || 'file')}"`);
+  res.send(message.fileData);
 });
 
 // ─── Get conversation details ───────────────────────────────────────

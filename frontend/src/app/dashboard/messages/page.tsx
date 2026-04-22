@@ -46,6 +46,13 @@ export default function MessagesPage() {
   const { user } = useAuth();
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
+  // Append auth token to file URLs so <img src> and <a href> work
+  const authUrl = (url: string) => {
+    if (!token || !url) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}token=${token}`;
+  };
+
   // Conversation list
   const [conversations, setConversations] = useState<ConvSummary[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -431,9 +438,9 @@ export default function MessagesPage() {
                       >
                         {/* File attachment */}
                         {msg.fileUrl && msg.fileType?.startsWith('image/') && (
-                          <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className="block mb-1">
+                          <a href={authUrl(msg.fileUrl)} target="_blank" rel="noopener noreferrer" className="block mb-1">
                             <img
-                              src={msg.fileUrl}
+                              src={authUrl(msg.fileUrl)}
                               alt={msg.fileName || 'Image'}
                               className="max-w-[240px] max-h-[240px] rounded-lg object-cover"
                             />
@@ -441,7 +448,7 @@ export default function MessagesPage() {
                         )}
                         {msg.fileUrl && !msg.fileType?.startsWith('image/') && (
                           <a
-                            href={msg.fileUrl}
+                            href={authUrl(msg.fileUrl)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className={clsx(
