@@ -20,6 +20,25 @@ export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
+/**
+ * Compact shift-time formatter: "10AM", "10:30AM", "6:45PM".
+ * Omits ":00" for whole hours. Takes an ISO string or Date.
+ */
+export function formatTimeCompact(input: string | Date): string {
+  const d = typeof input === 'string' ? new Date(input) : input;
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  if (h === 0) h = 12;
+  else if (h > 12) h -= 12;
+  return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2, '0')}${ampm}`;
+}
+
+/** Format a shift window as "10AM-6PM" / "10:30AM-2:45PM". */
+export function formatShiftRange(startIso: string | Date, endIso: string | Date): string {
+  return `${formatTimeCompact(startIso)}-${formatTimeCompact(endIso)}`;
+}
+
 /** Convert "HH:mm" (24-hour) string to "h:mm AM/PM" */
 export function to12h(time: string): string {
   const [hStr, mStr] = time.split(':');

@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const prisma = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireRole } = require('../middleware/auth');
 
 const router = Router();
 
@@ -159,102 +159,137 @@ router.get('/me', authenticate, async (req, res) => {
 });
 
 // Live roster — "who's on the floor right now" for the manager overview.
-// Combines three things in one payload so the frontend can render the whole
-// widget off a single 30-second poll:
 //
-//   working  — has an open TimeEntry (clocked in, not on break)
-//   onBreak  — has an open TimeEntry with breakStartedAt set
-//   absent   — has a PUBLISHED shift whose start time is ≥5 min in the
-//              past and <shiftEnd, but no open TimeEntry linked to them
-//              (i.e. scheduled and not here)
+// Returns every PUBLISHED shift currently in progress, grouped by
+// location → position, each person tagged with an attendance state the
+// frontend renders as a colored dot:
 //
-// "Absent" is noisy in the first few minutes of a shift (staff walking in,
-// swiping in a moment late), so we apply the same 5-min grace we use for
-// attendance lateness elsewhere in the app.
-const { requireRole } = require('../middleware/auth');
+//   PRESENT  (green)   — default; no manager event logged
+//   LATE     (yellow)  — manager logged a LATE event for this shift
+//   CALLOUT  (red)     — manager logged a CALLOUT event for this shift
+//   NO_SHOW  (red)     — manager logged a NO_SHOW event for this shift
+//
+// We deliberately do NOT infer lateness from time clock data — the time
+// clock feature is being phased out and "late" only means "a manager
+// explicitly marked this person late."
+//
+// Scoping: Owners see the whole org. Other roles (ADMIN, MANAGER) see
+// only the locations they're explicitly assigned to via
+// User.managedLocations. If a manager has no managed locations, they see
+// nothing here — we don't fall back to org-wide for this widget because
+// the intent is "who's on MY floor".
 router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const orgId = req.user.organizationId;
   const now = new Date();
-  const GRACE_MS = 5 * 60 * 1000;
-  const graceCutoff = new Date(now.getTime() - GRACE_MS);
 
-  // Open time entries (still clocked in) in this org.
-  const openEntries = await prisma.timeEntry.findMany({
-    where: {
-      clockOut: null,
-      user: { organizationId: orgId },
-    },
-    include: {
-      user: { select: { id: true, firstName: true, lastName: true } },
-    },
-  });
-
-  // We need the scheduled end time + location for each open entry, when
-  // linked to a shift. Batch fetch so we don't N+1 per user.
-  const linkedShiftIds = [...new Set(openEntries.map((e) => e.shiftId).filter(Boolean))];
-  const linkedShifts = linkedShiftIds.length
-    ? await prisma.shift.findMany({
-        where: { id: { in: linkedShiftIds } },
-        select: { id: true, endTime: true, location: { select: { name: true } }, position: { select: { name: true, color: true } } },
-      })
-    : [];
-  const shiftById = new Map(linkedShifts.map((s) => [s.id, s]));
-
-  const working = [];
-  const onBreak = [];
-  const onClockUserIds = new Set();
-
-  for (const e of openEntries) {
-    onClockUserIds.add(e.userId);
-    const shift = e.shiftId ? shiftById.get(e.shiftId) : null;
-    const row = {
-      userId: e.userId,
-      name: `${e.user.firstName} ${e.user.lastName}`,
-      clockIn: e.clockIn,
-      scheduledEnd: shift?.endTime || null,
-      locationName: shift?.location?.name || null,
-      positionName: shift?.position?.name || null,
-      positionColor: shift?.position?.color || null,
-      breakStartedAt: e.breakStartedAt || null,
-    };
-    if (e.breakStartedAt) onBreak.push(row);
-    else working.push(row);
+  // Figure out which locations this user can see.
+  let locationIdFilter; // undefined → no filter (owners)
+  if (req.user.role !== 'OWNER') {
+    const me = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { managedLocations: { select: { id: true } } },
+    });
+    const locIds = me?.managedLocations.map((l) => l.id) || [];
+    if (locIds.length === 0) {
+      // No assigned locations → nothing to show.
+      return res.json({ generatedAt: now.toISOString(), locations: [] });
+    }
+    locationIdFilter = { in: locIds };
   }
 
-  // Absent: published shifts that should be in progress but aren't.
+  // All PUBLISHED shifts in progress right now, with user/position/location.
   const liveShifts = await prisma.shift.findMany({
     where: {
       organizationId: orgId,
       status: 'PUBLISHED',
       userId: { not: null },
-      startTime: { lte: graceCutoff },
+      startTime: { lte: now },
       endTime: { gt: now },
+      ...(locationIdFilter ? { locationId: locationIdFilter } : {}),
     },
-    include: {
+    select: {
+      id: true,
+      startTime: true,
+      endTime: true,
       user: { select: { id: true, firstName: true, lastName: true } },
-      location: { select: { name: true } },
-      position: { select: { name: true, color: true } },
+      location: { select: { id: true, name: true } },
+      position: { select: { id: true, name: true, color: true } },
     },
   });
 
-  const absent = liveShifts
-    .filter((s) => s.user && !onClockUserIds.has(s.user.id))
-    .map((s) => ({
+  // Pull any manager-logged attendance events for those shifts in one query.
+  const shiftIds = liveShifts.map((s) => s.id);
+  const events = shiftIds.length
+    ? await prisma.attendanceEvent.findMany({
+        where: { shiftId: { in: shiftIds } },
+        select: { shiftId: true, type: true },
+      })
+    : [];
+  // If multiple events exist for a shift, prefer the most severe one:
+  // CALLOUT / NO_SHOW > LATE.
+  const severity = { CALLOUT: 3, NO_SHOW: 3, LATE: 2 };
+  const eventByShift = new Map();
+  for (const ev of events) {
+    const cur = eventByShift.get(ev.shiftId);
+    if (!cur || (severity[ev.type] || 0) > (severity[cur] || 0)) {
+      eventByShift.set(ev.shiftId, ev.type);
+    }
+  }
+
+  // Group by location → position.
+  const locMap = new Map(); // locationId|'_none' → { location, positions: Map }
+  for (const s of liveShifts) {
+    if (!s.user) continue;
+    const locKey = s.location?.id || '_none';
+    if (!locMap.has(locKey)) {
+      locMap.set(locKey, {
+        locationId: s.location?.id || null,
+        locationName: s.location?.name || 'Unassigned',
+        positions: new Map(),
+      });
+    }
+    const loc = locMap.get(locKey);
+    const posKey = s.position?.id || '_none';
+    if (!loc.positions.has(posKey)) {
+      loc.positions.set(posKey, {
+        positionId: s.position?.id || null,
+        positionName: s.position?.name || 'Unassigned',
+        positionColor: s.position?.color || null,
+        people: [],
+      });
+    }
+    const evType = eventByShift.get(s.id) || null;
+    let state = 'PRESENT';
+    if (evType === 'LATE') state = 'LATE';
+    else if (evType === 'CALLOUT') state = 'CALLOUT';
+    else if (evType === 'NO_SHOW') state = 'NO_SHOW';
+    loc.positions.get(posKey).people.push({
       userId: s.user.id,
       name: `${s.user.firstName} ${s.user.lastName}`,
+      shiftId: s.id,
       scheduledStart: s.startTime,
       scheduledEnd: s.endTime,
-      locationName: s.location?.name || null,
-      positionName: s.position?.name || null,
-      positionColor: s.position?.color || null,
-      minutesLate: Math.floor((now.getTime() - new Date(s.startTime).getTime()) / 60000),
-    }));
+      state,
+    });
+  }
+
+  // Serialize maps → arrays, sorted alphabetically.
+  const locations = [...locMap.values()]
+    .map((loc) => ({
+      locationId: loc.locationId,
+      locationName: loc.locationName,
+      positions: [...loc.positions.values()]
+        .map((p) => ({
+          ...p,
+          people: p.people.sort((a, b) => a.name.localeCompare(b.name)),
+        }))
+        .sort((a, b) => a.positionName.localeCompare(b.positionName)),
+    }))
+    .sort((a, b) => a.locationName.localeCompare(b.locationName));
 
   res.json({
     generatedAt: now.toISOString(),
-    working: working.sort((a, b) => a.name.localeCompare(b.name)),
-    onBreak: onBreak.sort((a, b) => a.name.localeCompare(b.name)),
-    absent: absent.sort((a, b) => b.minutesLate - a.minutesLate),
+    locations,
   });
 });
 

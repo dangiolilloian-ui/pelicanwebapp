@@ -30,7 +30,6 @@ const nav: NavItem[] = [
       { href: '/dashboard/schedule/templates', labelKey: 'nav.templates', icon: ClipboardIcon, managerOnly: true },
     ],
   },
-  { href: '/dashboard/timeclock', labelKey: 'nav.timeclock', icon: ClockIcon },
   { href: '/dashboard/team', labelKey: 'nav.team', icon: UsersIcon, managerOnly: true },
   { href: '/dashboard/announcements', labelKey: 'nav.announcements', icon: MegaphoneIcon },
   { href: '/dashboard/messages', labelKey: 'nav.messages', icon: ChatIcon },

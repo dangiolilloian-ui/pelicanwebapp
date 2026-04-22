@@ -242,20 +242,10 @@ function EmployeeOverview({ mine, firstName, token, onRefresh }: { mine: MyStats
       <ShiftChecklistCard />
 
       {/* Quick KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Card label={t('dashboard.shiftsThisWeek')} value={mine.weekShifts} color="indigo" />
         <Card label={t('dashboard.hoursThisWeek')} value={`${mine.weekHours}h`} color="green" />
         <Card label={t('dashboard.pendingTimeOff')} value={mine.pendingTimeOff} color="amber" href="/dashboard/timeoff" />
-        <div className={clsx(
-          'rounded-xl border p-4',
-          mine.clockedIn ? 'border-green-300 bg-green-50 dark:bg-green-900/20' : 'border-gray-200 dark:border-gray-800'
-        )}>
-          <p className="text-sm text-gray-500 dark:text-gray-400">{t('dashboard.clockStatus')}</p>
-          <p className={clsx('text-xl font-bold mt-1', mine.clockedIn ? 'text-green-600' : 'text-gray-400')}>
-            {mine.clockedIn ? t('dashboard.clockedIn') : t('dashboard.offTheClock')}
-          </p>
-          <a href="/dashboard/timeclock" className="text-xs text-indigo-600 hover:underline">{t('dashboard.goToTimeClock')}</a>
-        </div>
       </div>
 
       {/* Next shift hero */}
