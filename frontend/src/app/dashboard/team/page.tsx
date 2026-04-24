@@ -545,10 +545,16 @@ export default function TeamPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">
-              {linkModal.kind === 'invite' ? t('team.inviteLink') : t('team.passwordResetLink')}
+              {linkModal.kind === 'invite'
+                ? t('team.inviteLink')
+                : linkModal.emailedTo
+                  ? t('team.passwordResetLinkSent', { name: linkModal.name })
+                  : t('team.passwordResetLink')}
             </h2>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              {t('team.linkDesc', { name: linkModal.name })}
+              {linkModal.kind === 'reset' && linkModal.emailedTo
+                ? t('team.resetLinkBackupNote', { name: linkModal.name })
+                : t('team.linkDesc', { name: linkModal.name })}
             </p>
             {linkModal.emailedTo && (
               <div className="mb-4 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 px-3 py-2">
@@ -556,8 +562,15 @@ export default function TeamPage() {
                   <span className="font-medium">{t('team.emailSent')}</span>{' '}
                   <span className="font-mono">{linkModal.emailedTo}</span>
                 </p>
-                <p className="text-[11px] text-green-700 dark:text-green-400 mt-0.5">
-                  {t('team.emailSentHint')}
+              </div>
+            )}
+            {linkModal.kind === 'reset' && linkModal.emailedTo === null && (
+              <div className="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2">
+                <p className="text-xs text-red-800 dark:text-red-300 font-medium">
+                  {t('team.emailFailedTitle')}
+                </p>
+                <p className="text-[11px] text-red-700 dark:text-red-400 mt-0.5">
+                  {t('team.emailFailedHint', { name: linkModal.name })}
                 </p>
               </div>
             )}
