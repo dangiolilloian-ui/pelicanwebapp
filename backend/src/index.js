@@ -151,8 +151,17 @@ server.listen(PORT, '0.0.0.0', () => {
   startShiftRemindersJob();
   startUnconfirmedNudgeJob();
   startPtoAccrualJob();
-  startBreakReminderJob();
-  startClockOutReminderJob();
+  // Time-clock reminders are disabled — the time clock is being phased
+  // out in favor of manager-logged CHECKED_IN events, which intentionally
+  // do NOT notify (would be too noisy per department). To re-enable,
+  // just uncomment these two lines; the job files are kept in place.
+  //
+  // TODO: bring break reminders back for minors only — those employees
+  // are legally required to take a break, so the nudge is meaningful
+  // there. Would need to filter the job's query by `user.isMinor = true`
+  // (the is_minor column already exists).
+  // startBreakReminderJob();
+  // startClockOutReminderJob();
   startBirthdayReminderJob();
   startWeeklyDigestJob();
   startLaborBudgetAlertJob();

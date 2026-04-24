@@ -158,46 +158,75 @@ router.get('/me', authenticate, async (req, res) => {
   });
 });
 
-// Live roster — "who's on the floor right now" for the manager overview.
+// Live roster — "who's on the floor right now".
 //
 // Returns every PUBLISHED shift currently in progress, grouped by
-// location → position, each person tagged with an attendance state the
-// frontend renders as a colored dot:
+// location → position. Each person is tagged with an attendance state +
+// a `canManage` flag that tells the frontend whether to show action
+// buttons and reveal the full manager-only state detail.
 //
-//   PRESENT  (green)   — default; no manager event logged
-//   LATE     (yellow)  — manager logged a LATE event for this shift
-//   CALLOUT  (red)     — manager logged a CALLOUT event for this shift
-//   NO_SHOW  (red)     — manager logged a NO_SHOW event for this shift
+// Role-based scope and detail:
 //
-// We deliberately do NOT infer lateness from time clock data — the time
-// clock feature is being phased out and "late" only means "a manager
-// explicitly marked this person late."
+//   OWNER    — sees all locations org-wide, full detail, canManage=true.
+//   ADMIN    — sees everything at their managedLocations, full detail,
+//              canManage=true on everyone there.
+//   MANAGER  — sees everything at their managedLocations with full
+//              detail on every row. canManage=true only for shifts in
+//              positions they manage (their own department); rows in
+//              other departments are read-only but still show full
+//              attendance state.
+//   EMPLOYEE — sees only checked-in coworkers at their work `locations`.
+//              Anyone who isn't checked in (or who has a CALLOUT /
+//              NO_SHOW) is hidden entirely to keep the view simple and
+//              protect privacy.
 //
-// Scoping: Owners see the whole org. Other roles (ADMIN, MANAGER) see
-// only the locations they're explicitly assigned to via
-// User.managedLocations. If a manager has no managed locations, they see
-// nothing here — we don't fall back to org-wide for this widget because
-// the intent is "who's on MY floor".
-router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
+// Attendance states:
+//
+//   Manager view  → NOT_CHECKED_IN | CHECKED_IN | LATE | CALLOUT | NO_SHOW
+//   Employee view → CHECKED_IN only (no one else is listed)
+//
+// State precedence (manager view): CALLOUT/NO_SHOW > LATE > CHECKED_IN > NOT_CHECKED_IN.
+//
+// For canManage=true rows we also return `events` so the frontend knows
+// which events are active — toggle UI then POSTs to create or DELETEs
+// to remove.
+router.get('/live-roster', authenticate, async (req, res) => {
   const orgId = req.user.organizationId;
   const now = new Date();
+  const role = req.user.role;
 
-  // Figure out which locations this user can see.
-  let locationIdFilter; // undefined → no filter (owners)
-  if (req.user.role !== 'OWNER') {
+  // Figure out scope + authority sets for this viewer.
+  let managedLocationIds = new Set();
+  let managedPositionIds = new Set();
+  let locationIdFilter; // undefined → no filter (OWNER)
+
+  if (role !== 'OWNER') {
     const me = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { managedLocations: { select: { id: true } } },
+      select: {
+        managedLocations: { select: { id: true } },
+        managedPositions: { select: { id: true } },
+        locations: { select: { id: true } },
+      },
     });
-    const locIds = me?.managedLocations.map((l) => l.id) || [];
+    managedLocationIds = new Set((me?.managedLocations || []).map((l) => l.id));
+    managedPositionIds = new Set((me?.managedPositions || []).map((p) => p.id));
+    const workLocationIds = (me?.locations || []).map((l) => l.id);
+
+    // ADMIN/MANAGER scope by their managed locations; EMPLOYEE scopes
+    // by the locations they're assigned to work at.
+    const locIds = role === 'EMPLOYEE' ? workLocationIds : [...managedLocationIds];
     if (locIds.length === 0) {
-      // No assigned locations → nothing to show.
-      return res.json({ generatedAt: now.toISOString(), locations: [] });
+      return res.json({
+        generatedAt: now.toISOString(),
+        viewerRole: role,
+        locations: [],
+      });
     }
     locationIdFilter = { in: locIds };
   }
 
-  // All PUBLISHED shifts in progress right now, with user/position/location.
+  // All PUBLISHED shifts in progress right now, within the viewer's scope.
   const liveShifts = await prisma.shift.findMany({
     where: {
       organizationId: orgId,
@@ -217,29 +246,63 @@ router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'
     },
   });
 
-  // Pull any manager-logged attendance events for those shifts in one query.
+  // Pull attendance events for those shifts in one query.
   const shiftIds = liveShifts.map((s) => s.id);
   const events = shiftIds.length
     ? await prisma.attendanceEvent.findMany({
         where: { shiftId: { in: shiftIds } },
-        select: { shiftId: true, type: true },
+        select: { id: true, shiftId: true, type: true },
       })
     : [];
-  // If multiple events exist for a shift, prefer the most severe one:
-  // CALLOUT / NO_SHOW > LATE.
-  const severity = { CALLOUT: 3, NO_SHOW: 3, LATE: 2 };
-  const eventByShift = new Map();
+  // shiftId → Map<type, eventId>. Multiple events of the same type per
+  // shift shouldn't happen (we always toggle), but if they do, last write
+  // wins — fine for display.
+  const eventsByShift = new Map();
   for (const ev of events) {
-    const cur = eventByShift.get(ev.shiftId);
-    if (!cur || (severity[ev.type] || 0) > (severity[cur] || 0)) {
-      eventByShift.set(ev.shiftId, ev.type);
-    }
+    if (!eventsByShift.has(ev.shiftId)) eventsByShift.set(ev.shiftId, new Map());
+    eventsByShift.get(ev.shiftId).set(ev.type, ev.id);
   }
 
   // Group by location → position.
-  const locMap = new Map(); // locationId|'_none' → { location, positions: Map }
+  const locMap = new Map();
   for (const s of liveShifts) {
     if (!s.user) continue;
+
+    // canManage: can this viewer log attendance actions on this person?
+    let canManage = false;
+    if (role === 'OWNER') canManage = true;
+    else if (role === 'ADMIN') canManage = managedLocationIds.has(s.location?.id);
+    else if (role === 'MANAGER') {
+      canManage =
+        managedLocationIds.has(s.location?.id) && managedPositionIds.has(s.position?.id);
+    }
+
+    const evMap = eventsByShift.get(s.id) || new Map();
+    const hasCallout = evMap.has('CALLOUT');
+    const hasNoShow = evMap.has('NO_SHOW');
+    const hasLate = evMap.has('LATE');
+    const hasCheckedIn = evMap.has('CHECKED_IN');
+
+    // Employees only see coworkers who are actively checked in — no one
+    // else is visible. This keeps the view uncluttered and avoids
+    // revealing private attendance details (late / called out / not
+    // checked in yet).
+    if (role === 'EMPLOYEE') {
+      if (!hasCheckedIn || hasCallout || hasNoShow) continue;
+    }
+
+    let state;
+    if (role === 'EMPLOYEE') {
+      state = 'CHECKED_IN';
+    } else {
+      // Manager tiers (OWNER / ADMIN / MANAGER) always see full detail.
+      if (hasCallout) state = 'CALLOUT';
+      else if (hasNoShow) state = 'NO_SHOW';
+      else if (hasLate) state = 'LATE';
+      else if (hasCheckedIn) state = 'CHECKED_IN';
+      else state = 'NOT_CHECKED_IN';
+    }
+
     const locKey = s.location?.id || '_none';
     if (!locMap.has(locKey)) {
       locMap.set(locKey, {
@@ -258,11 +321,6 @@ router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'
         people: [],
       });
     }
-    const evType = eventByShift.get(s.id) || null;
-    let state = 'PRESENT';
-    if (evType === 'LATE') state = 'LATE';
-    else if (evType === 'CALLOUT') state = 'CALLOUT';
-    else if (evType === 'NO_SHOW') state = 'NO_SHOW';
     loc.positions.get(posKey).people.push({
       userId: s.user.id,
       name: `${s.user.firstName} ${s.user.lastName}`,
@@ -270,10 +328,20 @@ router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'
       scheduledStart: s.startTime,
       scheduledEnd: s.endTime,
       state,
+      canManage,
+      // Only include event ids for managers who can act on this row —
+      // the frontend uses these to decide POST vs DELETE when toggling.
+      events: canManage
+        ? {
+            checkedIn: hasCheckedIn ? evMap.get('CHECKED_IN') : null,
+            late: hasLate ? evMap.get('LATE') : null,
+            callout: hasCallout ? evMap.get('CALLOUT') : null,
+            noShow: hasNoShow ? evMap.get('NO_SHOW') : null,
+          }
+        : null,
     });
   }
 
-  // Serialize maps → arrays, sorted alphabetically.
   const locations = [...locMap.values()]
     .map((loc) => ({
       locationId: loc.locationId,
@@ -285,10 +353,17 @@ router.get('/live-roster', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'
         }))
         .sort((a, b) => a.positionName.localeCompare(b.positionName)),
     }))
+    // Drop locations/positions that ended up empty after privacy filtering.
+    .map((loc) => ({
+      ...loc,
+      positions: loc.positions.filter((p) => p.people.length > 0),
+    }))
+    .filter((loc) => loc.positions.length > 0)
     .sort((a, b) => a.locationName.localeCompare(b.locationName));
 
   res.json({
     generatedAt: now.toISOString(),
+    viewerRole: role,
     locations,
   });
 });

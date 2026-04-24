@@ -240,6 +240,7 @@ function EmployeeOverview({ mine, firstName, token, onRefresh }: { mine: MyStats
 
       <AnnouncementsBar />
       <ShiftChecklistCard />
+      <LiveRosterWidget />
 
       {/* Quick KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">

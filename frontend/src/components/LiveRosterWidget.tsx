@@ -7,7 +7,21 @@ import { useT } from '@/lib/i18n';
 import { formatShiftRange } from '@/lib/dates';
 import clsx from 'clsx';
 
-type AttendanceState = 'PRESENT' | 'LATE' | 'CALLOUT' | 'NO_SHOW';
+// Full state for manager-level rows; simplified rows only use the
+// CHECKED_IN / NOT_CHECKED_IN values.
+type AttendanceState =
+  | 'NOT_CHECKED_IN'
+  | 'CHECKED_IN'
+  | 'LATE'
+  | 'CALLOUT'
+  | 'NO_SHOW';
+
+interface Events {
+  checkedIn: string | null;
+  late: string | null;
+  callout: string | null;
+  noShow: string | null;
+}
 
 interface Person {
   userId: string;
@@ -16,6 +30,8 @@ interface Person {
   scheduledStart: string;
   scheduledEnd: string;
   state: AttendanceState;
+  canManage: boolean;
+  events: Events | null;
 }
 
 interface PositionGroup {
@@ -33,38 +49,45 @@ interface LocationGroup {
 
 interface Roster {
   generatedAt: string;
+  viewerRole: 'OWNER' | 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
   locations: LocationGroup[];
 }
 
-// Manager-only live roster. Refreshes every 30s so it reflects recent
-// attendance events without hammering the API. Location → position
-// nesting; both collapsed by default.
+// Live roster widget — see backend GET /dashboard/live-roster for the
+// full role-based scope and privacy rules. Refreshes every 30s so
+// attendance events surface quickly without hammering the API. For rows
+// the viewer can manage, the dot is clickable (toggles CHECKED_IN) and
+// extra "Late" / "Out" buttons are shown.
 export function LiveRosterWidget() {
   const t = useT();
   const { token } = useAuth();
   const [roster, setRoster] = useState<Roster | null>(null);
   const [error, setError] = useState('');
-  // Location IDs that are currently expanded. Collapsed by default.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [busyShift, setBusyShift] = useState<string | null>(null);
+
+  const load = useMemo(
+    () => async (signal?: AbortSignal) => {
+      try {
+        const data = await api<Roster>('/dashboard/live-roster', { token, signal });
+        if (!signal?.aborted) setRoster(data);
+      } catch (e: unknown) {
+        if (!signal?.aborted) setError((e as Error).message || 'Failed to load');
+      }
+    },
+    [token]
+  );
 
   useEffect(() => {
     if (!token) return;
-    let alive = true;
-    const load = async () => {
-      try {
-        const data = await api<Roster>('/dashboard/live-roster', { token });
-        if (alive) setRoster(data);
-      } catch (e: unknown) {
-        if (alive) setError((e as Error).message || 'Failed to load');
-      }
-    };
-    load();
-    const id = setInterval(load, 30000);
+    const ctrl = new AbortController();
+    load(ctrl.signal);
+    const id = setInterval(() => load(ctrl.signal), 30000);
     return () => {
-      alive = false;
+      ctrl.abort();
       clearInterval(id);
     };
-  }, [token]);
+  }, [token, load]);
 
   const totals = useMemo(() => {
     if (!roster) return { present: 0, late: 0, out: 0, total: 0 };
@@ -76,12 +99,49 @@ export function LiveRosterWidget() {
         for (const p of pos.people) {
           if (p.state === 'LATE') late++;
           else if (p.state === 'CALLOUT' || p.state === 'NO_SHOW') out++;
-          else present++;
+          else if (p.state === 'CHECKED_IN') present++;
         }
       }
     }
     return { present, late, out, total: present + late + out };
   }, [roster]);
+
+  // Toggle a given attendance event type on a shift. If the event
+  // already exists, DELETE it; otherwise POST a new one. Refreshes
+  // the roster after the change so dot colors + action state update.
+  const toggleEvent = async (
+    person: Person,
+    eventType: 'CHECKED_IN' | 'LATE' | 'CALLOUT'
+  ) => {
+    if (!person.canManage || !person.events) return;
+    const existingId =
+      eventType === 'CHECKED_IN'
+        ? person.events.checkedIn
+        : eventType === 'LATE'
+        ? person.events.late
+        : person.events.callout;
+
+    setBusyShift(person.shiftId);
+    try {
+      if (existingId) {
+        await api(`/attendance/${existingId}`, {
+          method: 'DELETE',
+          token,
+        });
+      } else {
+        await api(`/attendance/shift/${person.shiftId}`, {
+          method: 'POST',
+          token,
+          body: JSON.stringify({ type: eventType }),
+        });
+      }
+      await load();
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Failed');
+    } finally {
+      setBusyShift(null);
+    }
+  };
 
   if (error && !roster) {
     return (
@@ -111,6 +171,8 @@ export function LiveRosterWidget() {
     });
   };
 
+  const showDetailedTotals = roster.viewerRole !== 'EMPLOYEE';
+
   return (
     <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
@@ -126,12 +188,12 @@ export function LiveRosterWidget() {
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-2 rounded-full bg-green-500" /> {totals.present}
           </span>
-          {totals.late > 0 && (
+          {showDetailedTotals && totals.late > 0 && (
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full bg-yellow-400" /> {totals.late}
             </span>
           )}
-          {totals.out > 0 && (
+          {showDetailedTotals && totals.out > 0 && (
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full bg-red-500" /> {totals.out}
             </span>
@@ -156,6 +218,10 @@ export function LiveRosterWidget() {
                 n + p.people.filter((x) => x.state === 'CALLOUT' || x.state === 'NO_SHOW').length,
               0
             );
+            const locHere = loc.positions.reduce(
+              (n, p) => n + p.people.filter((x) => x.state === 'CHECKED_IN').length,
+              0
+            );
             return (
               <li key={locKey}>
                 <button
@@ -169,15 +235,18 @@ export function LiveRosterWidget() {
                   <span className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
                     <span className="inline-flex items-center gap-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                      {locCount - locLate - locOut}
+                      {locHere}
+                      {showDetailedTotals && (
+                        <span className="text-gray-400">/{locCount}</span>
+                      )}
                     </span>
-                    {locLate > 0 && (
+                    {showDetailedTotals && locLate > 0 && (
                       <span className="inline-flex items-center gap-1">
                         <span className="h-1.5 w-1.5 rounded-full bg-yellow-400" />
                         {locLate}
                       </span>
                     )}
-                    {locOut > 0 && (
+                    {showDetailedTotals && locOut > 0 && (
                       <span className="inline-flex items-center gap-1">
                         <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
                         {locOut}
@@ -205,7 +274,13 @@ export function LiveRosterWidget() {
                           </div>
                           <ul>
                             {pos.people.map((person) => (
-                              <PersonRow key={person.shiftId} person={person} t={t} />
+                              <PersonRow
+                                key={person.shiftId}
+                                person={person}
+                                busy={busyShift === person.shiftId}
+                                onToggle={toggleEvent}
+                                t={t}
+                              />
                             ))}
                           </ul>
                         </div>
@@ -224,17 +299,23 @@ export function LiveRosterWidget() {
 
 function PersonRow({
   person,
+  busy,
+  onToggle,
   t,
 }: {
   person: Person;
+  busy: boolean;
+  onToggle: (p: Person, type: 'CHECKED_IN' | 'LATE' | 'CALLOUT') => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const dotClass =
-    person.state === 'LATE'
-      ? 'bg-yellow-400'
-      : person.state === 'CALLOUT' || person.state === 'NO_SHOW'
+    person.state === 'CALLOUT' || person.state === 'NO_SHOW'
       ? 'bg-red-500'
-      : 'bg-green-500';
+      : person.state === 'LATE'
+      ? 'bg-yellow-400'
+      : person.state === 'CHECKED_IN'
+      ? 'bg-green-500'
+      : 'bg-gray-300 dark:bg-gray-600';
 
   const rowTint =
     person.state === 'CALLOUT' || person.state === 'NO_SHOW'
@@ -243,30 +324,111 @@ function PersonRow({
       ? 'bg-yellow-50/50 dark:bg-yellow-900/10'
       : '';
 
-  const label =
-    person.state === 'LATE'
-      ? t('liveRoster.stateLate')
-      : person.state === 'CALLOUT'
+  const stateLabel =
+    person.state === 'CALLOUT'
       ? t('liveRoster.stateCallout')
       : person.state === 'NO_SHOW'
       ? t('liveRoster.stateNoShow')
-      : null;
+      : person.state === 'LATE'
+      ? t('liveRoster.stateLate')
+      : person.state === 'CHECKED_IN'
+      ? t('liveRoster.stateCheckedIn')
+      : t('liveRoster.stateNotCheckedIn');
+
+  // Dot is a button only when the viewer can manage this row. We still
+  // use a <button> tag so keyboard users can activate it; for read-only
+  // rows it's a plain span.
+  const Dot = person.canManage ? (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => onToggle(person, 'CHECKED_IN')}
+      title={
+        person.events?.checkedIn
+          ? t('liveRoster.undoCheckIn')
+          : t('liveRoster.markCheckedIn')
+      }
+      className={clsx(
+        'h-3 w-3 rounded-full shrink-0 ring-2 ring-transparent hover:ring-gray-300 dark:hover:ring-gray-600 transition',
+        dotClass,
+        busy && 'opacity-50'
+      )}
+    />
+  ) : (
+    <span className={clsx('h-2 w-2 rounded-full shrink-0', dotClass)} />
+  );
 
   return (
     <li className={clsx('flex items-center gap-3 px-8 py-1.5', rowTint)}>
-      <span className={clsx('h-2 w-2 rounded-full shrink-0', dotClass)} />
+      {Dot}
       <div className="flex-1 min-w-0">
         <div className="text-sm text-gray-900 dark:text-gray-100 truncate">{person.name}</div>
-        {label && (
-          <div className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{label}</div>
-        )}
+        <div className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{stateLabel}</div>
       </div>
+      {person.canManage && (
+        <div className="flex items-center gap-1 shrink-0">
+          <ActionButton
+            active={!!person.events?.late}
+            disabled={busy}
+            onClick={() => onToggle(person, 'LATE')}
+            tone="yellow"
+          >
+            {t('liveRoster.late')}
+          </ActionButton>
+          <ActionButton
+            active={!!person.events?.callout}
+            disabled={busy}
+            onClick={() => onToggle(person, 'CALLOUT')}
+            tone="red"
+          >
+            {t('liveRoster.out')}
+          </ActionButton>
+        </div>
+      )}
       <div className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums shrink-0">
         {t('liveRoster.schedShort', {
           range: formatShiftRange(person.scheduledStart, person.scheduledEnd),
         })}
       </div>
     </li>
+  );
+}
+
+function ActionButton({
+  active,
+  disabled,
+  onClick,
+  tone,
+  children,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  tone: 'yellow' | 'red';
+  children: React.ReactNode;
+}) {
+  const palette =
+    tone === 'yellow'
+      ? active
+        ? 'bg-yellow-400 text-white border-yellow-400'
+        : 'bg-white dark:bg-gray-900 text-yellow-700 dark:text-yellow-400 border-gray-200 dark:border-gray-700 hover:bg-yellow-50 dark:hover:bg-yellow-900/20'
+      : active
+      ? 'bg-red-500 text-white border-red-500'
+      : 'bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 border-gray-200 dark:border-gray-700 hover:bg-red-50 dark:hover:bg-red-900/20';
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={clsx(
+        'text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded border transition',
+        palette,
+        disabled && 'opacity-50 cursor-not-allowed'
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
