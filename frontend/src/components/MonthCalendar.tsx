@@ -194,9 +194,12 @@ export function MonthCalendar({
                     <div
                       key={s.id}
                       onClick={(e) => { e.stopPropagation(); setModal({ shift: s }); }}
+                      title={!s.position ? t('schedule.noPositionAssigned') : undefined}
                       className={clsx(
                         'rounded px-1 py-0.5 text-[10px] truncate border',
-                        s.status === 'DRAFT'
+                        !s.position
+                          ? 'bg-orange-50 dark:bg-orange-950/40 border-orange-300 dark:border-orange-800 text-orange-800 dark:text-orange-300'
+                          : s.status === 'DRAFT'
                           ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300'
                           : 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300'
                       )}

@@ -728,6 +728,8 @@ export function WeekCalendar({
                             ? 'bg-red-50 border border-red-300 text-red-800'
                             : softConflict
                             ? 'bg-amber-50 border border-amber-300 text-amber-800'
+                            : !shift.position
+                            ? 'bg-orange-50 border border-orange-300 text-orange-800'
                             : shift.status === 'DRAFT'
                             ? 'bg-amber-50 border border-dashed border-amber-300 text-amber-800'
                             : 'bg-indigo-50 border border-indigo-200 text-indigo-800'
@@ -773,10 +775,14 @@ export function WeekCalendar({
                         <div className="font-medium">
                           {formatTime(shift.startTime)} – {formatTime(shift.endTime)}
                         </div>
-                        {shift.position && (
+                        {shift.position ? (
                           <div className="flex items-center gap-1 mt-0.5">
                             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: shift.position.color }} />
                             <span className="truncate">{shift.position.name}</span>
+                          </div>
+                        ) : (
+                          <div className="font-semibold truncate mt-0.5" title={t('schedule.noPositionAssigned')}>
+                            {t('schedule.noPositionAssigned')}
                           </div>
                         )}
                         {shift.notes && (

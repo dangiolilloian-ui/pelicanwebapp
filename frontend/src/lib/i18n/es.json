@@ -267,6 +267,7 @@
   "schedule.thisWeekHours": "{n}h esta semana",
   "schedule.quickAdd": "A\u00f1adir r\u00e1pido",
   "schedule.blankShift": "+ Turno en blanco\u2026",
+  "schedule.noPositionAssigned": "Sin puesto asignado",
   "schedule.recurringAdded": "{n} turno(s) recurrente(s) a\u00f1adidos como borrador",
   "schedule.recurringSkipped": "{n} omitidos (ya programados)",
   "schedule.recurringNone": "Sin turnos nuevos \u2014 todas las reglas ya programadas esta semana",

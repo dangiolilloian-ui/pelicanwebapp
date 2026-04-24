@@ -267,6 +267,7 @@
   "schedule.thisWeekHours": "{n}h this week",
   "schedule.quickAdd": "Quick add",
   "schedule.blankShift": "+ Blank shift\u2026",
+  "schedule.noPositionAssigned": "No position assigned",
   "schedule.recurringAdded": "{n} recurring shift(s) added as draft",
   "schedule.recurringSkipped": "{n} skipped (already scheduled)",
   "schedule.recurringNone": "No new shifts \u2014 all rules already scheduled this week",
