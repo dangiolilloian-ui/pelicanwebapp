@@ -25,9 +25,12 @@ router.get('/shift/:shiftId', authenticate, async (req, res) => {
 });
 
 // Verify that a manager-tier viewer has authority to log/unlog events
-// on a shift. OWNER can act on anything. ADMIN must have the shift's
-// location in managedLocations. MANAGER additionally must have the
-// shift's position in managedPositions (their own department).
+// on a shift.
+//   OWNER   — always allowed.
+//   ADMIN   — allowed org-wide if they have no managedLocations set;
+//             otherwise restricted to shifts at their managedLocations.
+//   MANAGER — restricted to shifts at their managedLocations AND in
+//             their managedPositions (their own department).
 // Returns null if allowed, or an { status, error } object to return.
 async function checkAttendanceAuthority(user, shift) {
   if (user.role === 'OWNER') return null;
@@ -43,6 +46,9 @@ async function checkAttendanceAuthority(user, shift) {
   });
   const locIds = new Set((me?.managedLocations || []).map((l) => l.id));
   const posIds = new Set((me?.managedPositions || []).map((p) => p.id));
+
+  // Admins with no explicit location scope get org-wide authority.
+  if (user.role === 'ADMIN' && locIds.size === 0) return null;
 
   if (shift.locationId && !locIds.has(shift.locationId)) {
     return { status: 403, error: 'Not authorized for this location' };
