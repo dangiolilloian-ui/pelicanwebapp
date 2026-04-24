@@ -737,12 +737,22 @@ export function WeekCalendar({
                           </span>
                         )}
                         {hardConflict && (
-                          <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center font-bold">!</span>
+                          <span className={clsx(
+                            'absolute h-3 w-3 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center font-bold',
+                            // Top-left in normal mode so it doesn't collide with the
+                            // hover delete button in the top-right. In select mode the
+                            // checkbox owns top-left, so fall back to top-right (the
+                            // delete button isn't rendered in select mode anyway).
+                            selectMode ? '-top-1 -right-1' : '-top-1 -left-1'
+                          )}>!</span>
                         )}
                         {softConflict && (
-                          <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-amber-500 text-white text-[8px] flex items-center justify-center font-bold" title="Overtime">⏱</span>
+                          <span className={clsx(
+                            'absolute h-3 w-3 rounded-full bg-amber-500 text-white text-[8px] flex items-center justify-center font-bold',
+                            selectMode ? '-top-1 -right-1' : '-top-1 -left-1'
+                          )} title="Overtime">⏱</span>
                         )}
-                        {!selectMode && !hardConflict && !softConflict && (
+                        {!selectMode && (
                           <button
                             type="button"
                             onClick={(e) => {
