@@ -120,12 +120,23 @@ export default function TeamPage() {
     if (user.role === 'ADMIN') return target.role !== 'OWNER';
     if (user.role === 'MANAGER') {
       if (target.role !== 'EMPLOYEE') return false;
-      // Scope by the manager's assigned departments (managedLocations), which
-      // matches the backend's canManageTarget. An unassigned manager can't act
-      // on anyone.
-      const myManaged = new Set((user.managedLocations || []).map((l) => l.id));
-      if (myManaged.size === 0) return false;
-      return (target.locations || []).some((l) => myManaged.has(l.id));
+      // Mirror of backend/lib/managerScope.coversUser. Keep in sync.
+      const myLocs = new Set((user.managedLocations || []).map((l) => l.id));
+      const myDepts = user.managedDepartments || [];
+      // Back-compat: manager-tier with nothing configured sees everything.
+      if (myLocs.size === 0 && myDepts.length === 0) return true;
+      const targetLocIds = (target.locations || []).map((l) => l.id);
+      if (user.isStoreManager) {
+        return targetLocIds.some((id) => myLocs.has(id));
+      }
+      const targetPosIds = new Set((target.positions || []).map((p) => p.id));
+      for (const d of myDepts) {
+        if (!targetLocIds.includes(d.locationId)) continue;
+        if (targetPosIds.size === 0) return true;
+        const deptPosIds = (d.positions || []).map((p) => p.id);
+        if (deptPosIds.some((id) => targetPosIds.has(id))) return true;
+      }
+      return false;
     }
     return false;
   };

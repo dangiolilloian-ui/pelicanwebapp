@@ -3,266 +3,449 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useT } from '@/lib/i18n';
+import { usePositions } from '@/hooks/usePositions';
+import { useLocations } from '@/hooks/useLocations';
+import type { Department, User } from '@/types';
 import clsx from 'clsx';
 
-interface Manager {
-  id: string;
-  firstName: string;
-  lastName: string;
-  role: string;
-}
-
-interface DeptPosition {
-  id: string;
-  name: string;
-  color: string;
-  managers: Manager[];
-}
-
-interface DeptLocation {
-  id: string;
-  name: string;
-  managers: Manager[];
-}
-
-interface OrgMembers {
-  id: string;
-  firstName: string;
-  lastName: string;
-  role: string;
-}
-
+// Settings -> Departments. A department is a named slice of one location with
+// a set of positions attached and a set of manager users assigned. This is
+// the shape backend/lib/managerScope consults when deciding what a dept
+// manager can see/do, so every edit here moves the visibility boundary for
+// those managers in real time.
+//
+// Gated to OWNER/ADMIN — matches the /api/departments route's requireRole.
+// MANAGER sees a read-only variant (no create/edit buttons, no picker).
 export function DeptManagersSection() {
   const { token, user } = useAuth();
-  const isOwnerOrAdmin = user?.role === 'OWNER' || user?.role === 'ADMIN';
+  const t = useT();
+  const canEdit = user?.role === 'OWNER' || user?.role === 'ADMIN';
 
-  const [positions, setPositions] = useState<DeptPosition[]>([]);
-  const [locations, setLocations] = useState<DeptLocation[]>([]);
-  const [managers, setManagers] = useState<OrgMembers[]>([]);
+  const { positions: allPositions } = usePositions();
+  const { locations: allLocations } = useLocations();
+
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [orgMembers, setOrgMembers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const fetchData = useCallback(async () => {
     if (!token) return;
+    setError('');
     try {
-      const [deptData, allUsers] = await Promise.all([
-        api<{ positions: DeptPosition[]; locations: DeptLocation[] }>('/org/dept-managers', { token }),
-        api<OrgMembers[]>('/users', { token }),
+      const [depts, users] = await Promise.all([
+        api<Department[]>('/departments', { token }),
+        // Only load the pool of assignable managers if we can edit — saves a
+        // request for plain managers reading the page.
+        canEdit
+          ? api<User[]>('/users', { token })
+          : Promise.resolve([] as User[]),
       ]);
-      setPositions(deptData.positions);
-      setLocations(deptData.locations);
-      // Only show OWNER/ADMIN/MANAGER as assignable managers
-      setManagers(allUsers.filter((u) => ['OWNER', 'ADMIN', 'MANAGER'].includes(u.role)));
+      setDepartments(depts);
+      setOrgMembers(
+        users.filter((u) => ['OWNER', 'ADMIN', 'MANAGER'].includes(u.role)),
+      );
+    } catch (err: any) {
+      setError(err.message || t('settings.departments.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, canEdit, t]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  const updatePositionManagers = async (positionId: string, managerIds: string[]) => {
-    if (!token) return;
-    await api(`/org/dept-managers/position/${positionId}`, {
-      token,
-      method: 'PUT',
-      body: JSON.stringify({ managerIds }),
-    });
+  useEffect(() => {
     fetchData();
+  }, [fetchData]);
+
+  // Create form state — kept simple (single-location per department, any
+  // number of positions), uniqueness is enforced server-side via a
+  // (locationId, name) unique index which will bubble up as a 409.
+  const [newName, setNewName] = useState('');
+  const [newLocationId, setNewLocationId] = useState<string>('');
+  const [newPositionIds, setNewPositionIds] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+
+  const createDepartment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !newName.trim() || !newLocationId) return;
+    setCreating(true);
+    setError('');
+    try {
+      const created = await api<Department>('/departments', {
+        token,
+        method: 'POST',
+        body: JSON.stringify({
+          name: newName.trim(),
+          locationId: newLocationId,
+          positionIds: Array.from(newPositionIds),
+        }),
+      });
+      setDepartments((prev) => [...prev, created]);
+      setNewName('');
+      setNewLocationId('');
+      setNewPositionIds(new Set());
+    } catch (err: any) {
+      setError(err.message || t('settings.departments.createFailed'));
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const updateLocationManagers = async (locationId: string, managerIds: string[]) => {
+  const deleteDepartment = async (id: string) => {
     if (!token) return;
-    await api(`/org/dept-managers/location/${locationId}`, {
+    if (!confirm(t('settings.departments.deleteConfirm'))) return;
+    try {
+      await api(`/departments/${id}`, { token, method: 'DELETE' });
+      setDepartments((prev) => prev.filter((d) => d.id !== id));
+    } catch (err: any) {
+      setError(err.message || t('settings.departments.deleteFailed'));
+    }
+  };
+
+  const saveDepartment = async (
+    id: string,
+    data: { name?: string; positionIds?: string[]; managerIds?: string[] },
+  ) => {
+    if (!token) return;
+    const updated = await api<Department>(`/departments/${id}`, {
       token,
       method: 'PUT',
-      body: JSON.stringify({ managerIds }),
+      body: JSON.stringify(data),
     });
-    fetchData();
+    setDepartments((prev) => prev.map((d) => (d.id === id ? updated : d)));
   };
 
   if (loading) {
     return (
       <section>
-        <h2 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-3">Department Managers</h2>
-        <div className="text-sm text-gray-400">Loading…</div>
+        <h2 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-3">
+          {t('settings.departments.title')}
+        </h2>
+        <div className="text-sm text-gray-400">{t('common.loading')}</div>
       </section>
     );
   }
 
-  if (positions.length === 0 && locations.length === 0) return null;
+  // Group departments by location for display — managers reason about
+  // "Deli + Bakery at Flemington", not a flat list.
+  const byLocation = departments.reduce<Record<string, Department[]>>((acc, d) => {
+    const key = d.location?.id || d.locationId;
+    (acc[key] = acc[key] || []).push(d);
+    return acc;
+  }, {});
 
   return (
     <section>
-      <h2 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-1">Department Managers</h2>
+      <h2 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-1">
+        {t('settings.departments.title')}
+      </h2>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-        Assign managers to positions and locations. They&apos;ll be notified of time-off requests, swaps, and open shifts for their departments. If none are assigned, owners get notified.
+        {t('settings.departments.desc')}
       </p>
 
+      {error && (
+        <div className="mb-3 text-sm text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg p-2">
+          {error}
+        </div>
+      )}
+
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
-        {/* Positions */}
-        {positions.length > 0 && (
-          <div>
-            <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/60 text-[10px] uppercase tracking-wide text-gray-400 font-semibold">
-              Positions
-            </div>
-            {positions.map((p) => (
-              <DeptRow
-                key={p.id}
-                label={p.name}
-                color={p.color}
-                currentManagers={p.managers}
-                allManagers={managers}
-                canEdit={!!isOwnerOrAdmin}
-                onSave={(ids) => updatePositionManagers(p.id, ids)}
-              />
-            ))}
+        {Object.entries(byLocation).length === 0 && (
+          <div className="px-4 py-3 text-xs text-gray-400">
+            {t('settings.departments.none')}
           </div>
         )}
 
-        {/* Locations */}
-        {locations.length > 0 && (
-          <div>
-            <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/60 text-[10px] uppercase tracking-wide text-gray-400 font-semibold">
-              Locations
+        {Object.entries(byLocation).map(([locId, depts]) => {
+          const locName = depts[0].location?.name ||
+            allLocations.find((l) => l.id === locId)?.name ||
+            t('settings.departments.unknownLocation');
+          return (
+            <div key={locId}>
+              <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/60 text-[10px] uppercase tracking-wide text-gray-400 font-semibold">
+                {locName}
+              </div>
+              {depts.map((d) => (
+                <DepartmentRow
+                  key={d.id}
+                  dept={d}
+                  allPositions={allPositions}
+                  allManagers={orgMembers}
+                  canEdit={canEdit}
+                  onSave={(data) => saveDepartment(d.id, data)}
+                  onDelete={() => deleteDepartment(d.id)}
+                />
+              ))}
             </div>
-            {locations.map((l) => (
-              <DeptRow
-                key={l.id}
-                label={l.name}
-                currentManagers={l.managers}
-                allManagers={managers}
-                canEdit={!!isOwnerOrAdmin}
-                onSave={(ids) => updateLocationManagers(l.id, ids)}
-              />
-            ))}
-          </div>
-        )}
+          );
+        })}
       </div>
+
+      {canEdit && (
+        <form
+          onSubmit={createDepartment}
+          className="mt-3 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-3 space-y-2"
+        >
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {t('settings.departments.addNew')}
+          </h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder={t('settings.departments.namePlaceholder')}
+              className="flex-1 min-w-[180px] rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              required
+            />
+            <select
+              value={newLocationId}
+              onChange={(e) => setNewLocationId(e.target.value)}
+              required
+              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">{t('settings.departments.chooseLocation')}</option>
+              {allLocations.map((l) => (
+                <option key={l.id} value={l.id}>{l.name}</option>
+              ))}
+            </select>
+          </div>
+          {allPositions.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                {t('settings.departments.positionsLabel')}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {allPositions.map((p) => {
+                  const on = newPositionIds.has(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() =>
+                        setNewPositionIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                          return next;
+                        })
+                      }
+                      className={clsx(
+                        'rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition',
+                        on
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:border-indigo-400',
+                      )}
+                    >
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div>
+            <button
+              type="submit"
+              disabled={creating || !newName.trim() || !newLocationId}
+              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {creating ? t('common.saving') : t('settings.departments.create')}
+            </button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }
 
-function DeptRow({
-  label,
-  color,
-  currentManagers,
+function DepartmentRow({
+  dept,
+  allPositions,
   allManagers,
   canEdit,
   onSave,
+  onDelete,
 }: {
-  label: string;
-  color?: string;
-  currentManagers: Manager[];
-  allManagers: OrgMembers[];
+  dept: Department;
+  allPositions: { id: string; name: string; color: string }[];
+  allManagers: User[];
   canEdit: boolean;
-  onSave: (managerIds: string[]) => Promise<void>;
+  onSave: (data: { name?: string; positionIds?: string[]; managerIds?: string[] }) => Promise<void>;
+  onDelete: () => void;
 }) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set(currentManagers.map((m) => m.id)));
   const [saving, setSaving] = useState(false);
+  const [name, setName] = useState(dept.name);
+  const [positionIds, setPositionIds] = useState<Set<string>>(
+    () => new Set((dept.positions || []).map((p) => p.id)),
+  );
+  const [managerIds, setManagerIds] = useState<Set<string>>(
+    () => new Set((dept.managers || []).map((m) => m.id)),
+  );
 
-  const toggleManager = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const reset = () => {
+    setName(dept.name);
+    setPositionIds(new Set((dept.positions || []).map((p) => p.id)));
+    setManagerIds(new Set((dept.managers || []).map((m) => m.id)));
+    setEditing(false);
   };
 
   const save = async () => {
     setSaving(true);
     try {
-      await onSave([...selected]);
+      await onSave({
+        name: name.trim(),
+        positionIds: Array.from(positionIds),
+        managerIds: Array.from(managerIds),
+      });
       setEditing(false);
     } finally {
       setSaving(false);
     }
   };
 
-  const cancel = () => {
-    setSelected(new Set(currentManagers.map((m) => m.id)));
-    setEditing(false);
-  };
-
   return (
     <div className="px-4 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {color && <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />}
-          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</span>
-        </div>
-
-        {!editing && (
-          <div className="flex items-center gap-2">
-            {currentManagers.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {currentManagers.map((m) => (
+      {!editing ? (
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{dept.name}</div>
+            {(dept.positions && dept.positions.length > 0) && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {dept.positions.map((p) => (
+                  <span
+                    key={p.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 px-2 py-0.5 text-[10px] font-medium"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: p.color }} />
+                    {p.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {dept.managers && dept.managers.length > 0 ? (
+                dept.managers.map((m) => (
                   <span
                     key={m.id}
                     className="inline-flex items-center rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 text-[11px] font-medium"
                   >
                     {m.firstName} {m.lastName[0]}.
                   </span>
-                ))}
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">No manager assigned</span>
-            )}
-            {canEdit && (
+                ))
+              ) : (
+                <span className="text-xs text-gray-400">{t('settings.departments.noManagers')}</span>
+              )}
+            </div>
+          </div>
+          {canEdit && (
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => setEditing(true)}
-                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
               >
-                Edit
+                {t('common.edit')}
               </button>
-            )}
-          </div>
-        )}
-      </div>
+              <button
+                onClick={onDelete}
+                className="text-xs text-red-500 hover:text-red-700"
+              >
+                {t('common.delete')}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 space-y-3">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-2 py-1 text-sm"
+          />
 
-      {editing && (
-        <div className="mt-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
-          <div className="flex flex-wrap gap-2 mb-3">
-            {allManagers.map((m) => {
-              const isSelected = selected.has(m.id);
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => toggleManager(m.id)}
-                  className={clsx(
-                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition border',
-                    isSelected
-                      ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300'
-                      : 'bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-300'
-                  )}
-                >
-                  {isSelected && (
-                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                    </svg>
-                  )}
-                  {m.firstName} {m.lastName}
-                  <span className="text-[9px] opacity-60 uppercase">{m.role}</span>
-                </button>
-              );
-            })}
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+              {t('settings.departments.positionsLabel')}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {allPositions.map((p) => {
+                const on = positionIds.has(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() =>
+                      setPositionIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                        return next;
+                      })
+                    }
+                    className={clsx(
+                      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition',
+                      on
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:border-indigo-400',
+                    )}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: p.color }} />
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+              {t('settings.departments.managersLabel')}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {allManagers.map((m) => {
+                const on = managerIds.has(m.id);
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() =>
+                      setManagerIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+                        return next;
+                      })
+                    }
+                    className={clsx(
+                      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition',
+                      on
+                        ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300'
+                        : 'bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-300',
+                    )}
+                  >
+                    {m.firstName} {m.lastName}
+                    <span className="text-[9px] opacity-60 uppercase">{m.role}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={save}
-              disabled={saving}
-              className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition"
+              disabled={saving || !name.trim()}
+              className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? t('common.saving') : t('common.save')}
             </button>
             <button
               type="button"
-              onClick={cancel}
-              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+              onClick={reset}
+              className="rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>

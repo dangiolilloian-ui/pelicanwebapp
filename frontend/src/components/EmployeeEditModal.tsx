@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { User, Role, EmploymentType } from '@/types';
+import type { User, Role, EmploymentType, Department } from '@/types';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useT } from '@/lib/i18n';
@@ -43,6 +43,9 @@ interface Props {
     isMinor?: boolean;
     positionIds?: string[];
     locationIds?: string[];
+    isStoreManager?: boolean;
+    managedLocationIds?: string[];
+    managedDepartmentIds?: string[];
   }) => Promise<void>;
   onClose: () => void;
 }
@@ -50,7 +53,13 @@ interface Props {
 export function EmployeeEditModal({ member, onSave, onClose }: Props) {
   const { token, user: currentUser } = useAuth();
   const t = useT();
-  const isOwner = currentUser?.role === 'OWNER';
+  // Who can edit role + scope. Matches the backend users-PUT gate: OWNER and
+  // ADMIN can, MANAGER can't. ADMIN still can't touch an OWNER, and nobody can
+  // change their own role (prevents footguns like locking yourself out).
+  const canEditScope = currentUser?.role === 'OWNER' || currentUser?.role === 'ADMIN';
+  const canChangeRoles =
+    canEditScope && member.role !== 'OWNER' && member.id !== currentUser?.id;
+
   const [role, setRole] = useState<Role>(member.role || 'EMPLOYEE');
   const [employmentType, setEmploymentType] = useState<EmploymentType>(member.employmentType || 'FULL_TIME');
   const [pin, setPin] = useState(member.pin || '');
@@ -60,9 +69,9 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Positions + locations this employee is assigned to. Managed as Sets so we
-  // can toggle individual checkboxes cheaply and send the full intended list
-  // to the backend on save.
+  // Positions + locations this employee is assigned to (i.e. what they're
+  // trained in and where they physically work). Separate from the manager's
+  // *scope* fields below, which live on manager-tier users only.
   const { positions: allPositions } = usePositions();
   const { locations: allLocations } = useLocations();
   const [positionIds, setPositionIds] = useState<Set<string>>(
@@ -83,6 +92,43 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+
+  // Manager scope. Two flavors that map 1:1 to backend/lib/managerScope:
+  //   - store manager: full authority at every managedLocation
+  //   - dept manager:  scoped to specific managedDepartments (location+positions)
+  // The UI shows one or the other based on the toggle, and we only send
+  // whichever list is "live" on save so we don't clobber the other side.
+  const [isStoreManager, setIsStoreManager] = useState<boolean>(member.isStoreManager ?? false);
+  const [managedLocationIds, setManagedLocationIds] = useState<Set<string>>(
+    () => new Set((member.managedLocations ?? []).map((l) => l.id))
+  );
+  const [managedDepartmentIds, setManagedDepartmentIds] = useState<Set<string>>(
+    () => new Set((member.managedDepartments ?? []).map((d) => d.id))
+  );
+  const toggleManagedLocation = (id: string) =>
+    setManagedLocationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const toggleManagedDepartment = (id: string) =>
+    setManagedDepartmentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  // Departments for the scope picker. Only fetched if the viewer can edit
+  // scope AND the current role selection is manager-tier — saves a request
+  // on the common case of editing a plain EMPLOYEE.
+  const [allDepartments, setAllDepartments] = useState<Department[]>([]);
+  const isManagerRole = role === 'MANAGER' || role === 'ADMIN';
+  useEffect(() => {
+    if (!token || !canEditScope || !isManagerRole) return;
+    api<Department[]>('/departments', { token })
+      .then(setAllDepartments)
+      .catch((err) => console.error('Failed to load departments', err));
+  }, [token, canEditScope, isManagerRole]);
 
   // Manager-only notes — loaded lazily once the modal is open.
   const [notes, setNotes] = useState<EmployeeNote[]>([]);
@@ -183,10 +229,22 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
     }
     setSaving(true);
     try {
+      // Only send scope fields when the viewer is entitled AND the role
+      // selection is manager-tier. When demoting to EMPLOYEE we intentionally
+      // omit them — the backend detects role===EMPLOYEE and scrubs scope in
+      // one transaction, which is cleaner than asking the UI to remember.
+      const willBeManagerTier = role === 'MANAGER' || role === 'ADMIN';
+      const scopePayload =
+        canEditScope && willBeManagerTier
+          ? {
+              isStoreManager,
+              managedLocationIds: isStoreManager ? Array.from(managedLocationIds) : [],
+              managedDepartmentIds: isStoreManager ? [] : Array.from(managedDepartmentIds),
+            }
+          : {};
+
       await onSave({
-        ...(isOwner && member.role !== 'OWNER' && member.id !== currentUser?.id && role !== member.role
-          ? { role }
-          : {}),
+        ...(canChangeRoles && role !== member.role ? { role } : {}),
         ...(employmentType !== member.employmentType ? { employmentType } : {}),
         pin: pin === '' ? null : pin,
         weeklyHoursCap: cap === '' ? null : Number(cap),
@@ -194,6 +252,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
         isMinor: minor,
         positionIds: Array.from(positionIds),
         locationIds: Array.from(locationIds),
+        ...scopePayload,
       });
       onClose();
     } catch (err: any) {
@@ -203,6 +262,17 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
     }
   };
 
+  // Group departments by location for the dept picker — managers usually
+  // think "I oversee Deli + Bakery at Flemington", not a flat dept list.
+  const departmentsByLocation = allDepartments.reduce<Record<string, Department[]>>((acc, d) => {
+    const key = d.location?.id || d.locationId;
+    (acc[key] = acc[key] || []).push(d);
+    return acc;
+  }, {});
+
+  // Role options depend on viewer — ADMIN can't hand out OWNER and can't
+  // promote above themselves, so we only ever surface EMPLOYEE/MANAGER/ADMIN.
+  // OWNER role is conferred via a separate ownership-transfer flow.
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-900 p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -214,39 +284,151 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
         <form onSubmit={submit} className="space-y-4">
           {error && <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg p-2">{error}</p>}
 
-          {/* Role — only the owner can change roles, and you can't change
-              another owner or yourself */}
-          {isOwner && member.role !== 'OWNER' && member.id !== currentUser?.id && (
+          {canChangeRoles && (
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Role
+                {t('employeeEdit.role')}
               </label>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as typeof role)}
                 className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <option value="EMPLOYEE">Employee</option>
-                <option value="MANAGER">Manager</option>
-                <option value="ADMIN">Admin</option>
+                <option value="EMPLOYEE">{t('employeeEdit.roleEmployee')}</option>
+                <option value="MANAGER">{t('employeeEdit.roleManager')}</option>
+                <option value="ADMIN">{t('employeeEdit.roleAdmin')}</option>
               </select>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Managers can create schedules and manage their locations. Admins have broader access across all locations.
+                {t('employeeEdit.roleHint')}
               </p>
+            </div>
+          )}
+
+          {/* Manager scope. Only shown when the selected role is MANAGER or
+              ADMIN and the viewer is entitled. ADMIN users effectively have
+              org-wide authority on the backend, but we still let the UI pick
+              a scope — it's harmless and keeps the form symmetric. */}
+          {canEditScope && isManagerRole && (
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {t('employeeEdit.storeManager')}
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {t('employeeEdit.storeManagerHint')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsStoreManager((v) => !v)}
+                  className={
+                    'relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out cursor-pointer ' +
+                    (isStoreManager ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-700')
+                  }
+                >
+                  <span
+                    className={
+                      'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ' +
+                      (isStoreManager ? 'translate-x-5' : 'translate-x-0')
+                    }
+                  />
+                </button>
+              </div>
+
+              {isStoreManager ? (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    {t('employeeEdit.managedLocations')}
+                  </label>
+                  {allLocations.length === 0 ? (
+                    <p className="text-xs text-gray-400">{t('employeeEdit.noLocationsYet')}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {allLocations.map((l) => {
+                        const on = managedLocationIds.has(l.id);
+                        return (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => toggleManagedLocation(l.id)}
+                            className={
+                              'rounded-full border px-3 py-1 text-xs font-medium transition ' +
+                              (on
+                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                : 'bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:border-indigo-400')
+                            }
+                          >
+                            {l.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('employeeEdit.managedLocationsHint')}
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    {t('employeeEdit.managedDepartments')}
+                  </label>
+                  {allDepartments.length === 0 ? (
+                    <p className="text-xs text-gray-400">{t('employeeEdit.noDepartmentsYet')}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {Object.entries(departmentsByLocation).map(([locId, depts]) => {
+                        const locName = depts[0].location?.name || t('employeeEdit.unknownLocation');
+                        return (
+                          <div key={locId}>
+                            <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+                              {locName}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {depts.map((d) => {
+                                const on = managedDepartmentIds.has(d.id);
+                                return (
+                                  <button
+                                    key={d.id}
+                                    type="button"
+                                    onClick={() => toggleManagedDepartment(d.id)}
+                                    className={
+                                      'rounded-full border px-3 py-1 text-xs font-medium transition ' +
+                                      (on
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:border-indigo-400')
+                                    }
+                                  >
+                                    {d.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('employeeEdit.managedDepartmentsHint')}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Employment Type
+              {t('employeeEdit.employmentType')}
             </label>
             <select
               value={employmentType}
               onChange={(e) => setEmploymentType(e.target.value as typeof employmentType)}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="FULL_TIME">Full Time</option>
-              <option value="PART_TIME">Part Time</option>
+              <option value="FULL_TIME">{t('employeeEdit.fullTime')}</option>
+              <option value="PART_TIME">{t('employeeEdit.partTime')}</option>
             </select>
           </div>
 
@@ -300,14 +482,13 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
             </p>
           </div>
 
-          {/* Minor toggle */}
           <div className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Minor (requires meal break)
+                {t('employeeEdit.minor')}
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Flags shifts 6+ hours as a conflict if no break is scheduled.
+                {t('employeeEdit.minorHint')}
               </p>
             </div>
             <button
@@ -327,14 +508,12 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
             </button>
           </div>
 
-          {/* Job positions this employee is trained for. Used by the schedule
-              view to filter the roster by role. */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Job positions
+              {t('employeeEdit.jobPositions')}
             </label>
             {allPositions.length === 0 ? (
-              <p className="text-xs text-gray-400">No positions defined yet. Add them in Settings.</p>
+              <p className="text-xs text-gray-400">{t('employeeEdit.noPositionsYet')}</p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {allPositions.map((p) => {
@@ -358,17 +537,16 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
               </div>
             )}
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Only positions you tick here will show this employee when filtered by role on the schedule.
+              {t('employeeEdit.jobPositionsHint')}
             </p>
           </div>
 
-          {/* Locations this employee works at. */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Locations
+              {t('employeeEdit.locations')}
             </label>
             {allLocations.length === 0 ? (
-              <p className="text-xs text-gray-400">No locations defined yet. Add them in Settings.</p>
+              <p className="text-xs text-gray-400">{t('employeeEdit.noLocationsYet')}</p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {allLocations.map((l) => {
@@ -409,7 +587,6 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
           </div>
         </form>
 
-        {/* PTO panel — balance + short ledger + manual adjust */}
         {ptoBalance && ptoBalance.enabled && (
           <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-800">
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('employeeEdit.ptoBalance')}</h3>
@@ -460,8 +637,8 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
                       <span className="font-mono text-[9px] bg-gray-100 dark:bg-gray-800 rounded px-1 py-0.5 mr-1">
                         {l.kind}
                       </span>
-                      {l.reason || '—'}
-                      <span className="text-gray-400 ml-1">· {new Date(l.createdAt).toLocaleDateString()}</span>
+                      {l.reason || '-'}
+                      <span className="text-gray-400 ml-1">&middot; {new Date(l.createdAt).toLocaleDateString()}</span>
                     </span>
                     <span className={l.delta >= 0 ? 'text-green-600' : 'text-red-600'}>
                       {l.delta >= 0 ? '+' : ''}{l.delta}h
@@ -473,7 +650,6 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
           </div>
         )}
 
-        {/* Manager-only internal notes — the employee never sees these. */}
         <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-800">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('employeeEdit.internalNotes')}</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -519,7 +695,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
               disabled={noteBusy || !newNote.trim()}
               className="rounded-lg bg-indigo-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
             >
-              {noteBusy ? '…' : t('common.add')}
+              {noteBusy ? '...' : t('common.add')}
             </button>
           </form>
         </div>
