@@ -16,11 +16,18 @@ export interface User {
   birthDate?: string | null;
   isMinor?: boolean;
   isActive?: boolean;
+  // True when this manager has full authority at every location in
+  // managedLocations (store-manager). False means their authority is
+  // scoped to managedDepartments instead.
+  isStoreManager?: boolean;
   positions?: Pick<Position, 'id' | 'name' | 'color'>[];
   locations?: Pick<Location, 'id' | 'name'>[];
-  // Only populated on the /auth/me payload for the logged-in user — used by
-  // the Team page to decide which rows a MANAGER can act on.
+  // Scope payload — populated by /auth/me for the logged-in user, and by
+  // the team-list endpoint for every member the viewer can see. Used by
+  // the Team page to decide which rows a MANAGER can act on and by the
+  // Employee Edit modal to render the current scope assignments.
   managedLocations?: Pick<Location, 'id' | 'name'>[];
+  managedDepartments?: Department[];
 }
 
 export interface Shift {
@@ -50,6 +57,19 @@ export interface Location {
   longitude?: number | null;
   radiusMeters?: number;
   weeklyBudget?: number | null;
+}
+
+// A named grouping of Positions at one Location. The unit managers are
+// scoped to via managedDepartments. Keep the shape in sync with what
+// /api/departments returns (include: { location, positions, managers }).
+export interface Department {
+  id: string;
+  name: string;
+  locationId: string;
+  organizationId?: string;
+  location?: Pick<Location, 'id' | 'name'>;
+  positions?: Pick<Position, 'id' | 'name' | 'color'>[];
+  managers?: Pick<User, 'id' | 'firstName' | 'lastName' | 'email' | 'role' | 'isActive'>[];
 }
 
 export interface AuthResponse {

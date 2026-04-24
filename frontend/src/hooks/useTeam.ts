@@ -112,7 +112,7 @@ export function useTeam() {
     });
   };
 
-  const updateMember = async (id: string, data: Partial<User> & { positionIds?: string[]; locationIds?: string[] }) => {
+  const updateMember = async (id: string, data: Partial<User> & { positionIds?: string[]; locationIds?: string[]; managedLocationIds?: string[]; managedDepartmentIds?: string[] }) => {
     if (!token) return;
     const updated = await api<User>(`/users/${id}`, {
       token,
