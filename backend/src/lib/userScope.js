@@ -1,4 +1,5 @@
 const prisma = require('../config/db');
+const { loadScope, coversUser } = require('./managerScope');
 
 /**
  * Can `requester` perform a privileged action (deactivate, reactivate, remove)
@@ -11,9 +12,9 @@ const prisma = require('../config/db');
  *   - Removing/deactivating the last remaining OWNER: never allowed.
  *   - OWNER: can act on anyone in the org.
  *   - ADMIN: can act on anyone in the org EXCEPT an OWNER.
- *   - MANAGER: can only act on EMPLOYEEs whose `locations` overlap with the
- *     manager's own `managedLocations` (i.e. the employee works in a store
- *     the manager is responsible for).
+ *   - MANAGER: can only act on EMPLOYEEs within their scope. Store managers
+ *     gate on managedLocations; dept managers gate on (dept location AND
+ *     dept positions). See managerScope.js for the shared rule.
  *   - EMPLOYEE: can never act.
  *
  * Returns { ok: true, target } on success, { ok: false, status, error } on
@@ -23,12 +24,7 @@ async function canManageTarget(requesterPayload, targetId) {
   const [requester, target] = await Promise.all([
     prisma.user.findUnique({
       where: { id: requesterPayload.id },
-      select: {
-        id: true,
-        role: true,
-        organizationId: true,
-        managedLocations: { select: { id: true } },
-      },
+      select: { id: true, role: true, organizationId: true },
     }),
     prisma.user.findUnique({
       where: { id: targetId },
@@ -41,6 +37,7 @@ async function canManageTarget(requesterPayload, targetId) {
         email: true,
         isActive: true,
         locations: { select: { id: true } },
+        positions: { select: { id: true } },
       },
     }),
   ]);
@@ -86,20 +83,20 @@ async function canManageTarget(requesterPayload, targetId) {
         error: 'Managers can only deactivate or remove employees',
       };
     }
-    const requesterLocs = new Set(requester.managedLocations.map((l) => l.id));
-    if (requesterLocs.size === 0) {
+    const scope = await loadScope(requester.id, requester.role);
+    if (scope.kind === 'all') return { ok: true, target };
+    if (scope.kind === 'none') {
       return {
         ok: false,
         status: 403,
-        error: 'You are not assigned to any departments',
+        error: 'You are not assigned to any departments or stores',
       };
     }
-    const overlap = target.locations.some((l) => requesterLocs.has(l.id));
-    if (!overlap) {
+    if (!coversUser(scope, target)) {
       return {
         ok: false,
         status: 403,
-        error: 'This employee is not in one of your departments',
+        error: 'This employee is not in your scope',
       };
     }
     return { ok: true, target };
