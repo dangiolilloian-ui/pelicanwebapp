@@ -32,9 +32,19 @@ router.get('/', authenticate, async (req, res) => {
     select: {
       id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
       employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true, isMinor: true,
-      isActive: true,
+      isActive: true, isStoreManager: true,
       positions: { select: { id: true, name: true, color: true } },
       locations: { select: { id: true, name: true } },
+      managedLocations: { select: { id: true, name: true } },
+      managedDepartments: {
+        select: {
+          id: true,
+          name: true,
+          locationId: true,
+          location: { select: { id: true, name: true } },
+          positions: { select: { id: true, name: true } },
+        },
+      },
     },
     orderBy: { firstName: 'asc' },
   });
@@ -195,12 +205,15 @@ router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANA
 
 // Update user
 router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
-  const { firstName, lastName, phone, role, employmentType, weeklyHoursCap, pin, birthDate, isMinor, positionIds, locationIds } = req.body;
+  const { firstName, lastName, phone, role, employmentType, weeklyHoursCap, pin, birthDate, isMinor, positionIds, locationIds, isStoreManager, managedLocationIds, managedDepartmentIds } = req.body;
 
-  // Only the owner can change roles, and nobody can set OWNER
+  // Role changes: OWNER and ADMIN can change roles. ADMIN cannot touch the
+  // OWNER (can't promote themselves past admin, can't demote the owner).
+  // Nobody can set OWNER through this endpoint — ownership transfer is a
+  // separate, deliberate action.
   if (role) {
-    if (req.user.role !== 'OWNER') {
-      return res.status(403).json({ error: 'Only the owner can change roles' });
+    if (!['OWNER', 'ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only owners and admins can change roles' });
     }
     if (role === 'OWNER') {
       return res.status(400).json({ error: 'Cannot assign OWNER role' });
@@ -208,9 +221,48 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
     if (!['EMPLOYEE', 'MANAGER', 'ADMIN'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
-    // Prevent changing the owner's own role
     if (req.params.id === req.user.id) {
       return res.status(400).json({ error: 'Cannot change your own role' });
+    }
+    if (req.user.role === 'ADMIN') {
+      const targetForRole = await prisma.user.findUnique({
+        where: { id: req.params.id },
+        select: { role: true, organizationId: true },
+      });
+      if (!targetForRole || targetForRole.organizationId !== req.user.organizationId) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (targetForRole.role === 'OWNER') {
+        return res.status(403).json({ error: "Admins cannot change the owner's role" });
+      }
+    }
+  }
+
+  // Scope-touching fields (isStoreManager, managedLocationIds,
+  // managedDepartmentIds) are OWNER/ADMIN only. Managers can edit their
+  // employees' positions/locations but not who manages whom.
+  const scopeFieldsTouched = (
+    isStoreManager !== undefined ||
+    Array.isArray(managedLocationIds) ||
+    Array.isArray(managedDepartmentIds)
+  );
+  if (scopeFieldsTouched && !['OWNER', 'ADMIN'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only owners and admins can change manager scope' });
+  }
+  if (Array.isArray(managedLocationIds) && managedLocationIds.length > 0) {
+    const n = await prisma.location.count({
+      where: { id: { in: managedLocationIds }, organizationId: req.user.organizationId },
+    });
+    if (n !== managedLocationIds.length) {
+      return res.status(400).json({ error: 'Invalid managedLocationIds' });
+    }
+  }
+  if (Array.isArray(managedDepartmentIds) && managedDepartmentIds.length > 0) {
+    const n = await prisma.department.count({
+      where: { id: { in: managedDepartmentIds }, organizationId: req.user.organizationId },
+    });
+    if (n !== managedDepartmentIds.length) {
+      return res.status(400).json({ error: 'Invalid managedDepartmentIds' });
     }
   }
 
@@ -257,6 +309,12 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
   }
 
   try {
+    // Demoting to EMPLOYEE strips any manager scope so a former manager
+    // isn't still tagged as isStoreManager/managedLocations/managedDepartments
+    // and showing up as a notification target or still visible on rosters
+    // they shouldn't see.
+    const demotingToEmployee = role === 'EMPLOYEE';
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: {
@@ -282,12 +340,40 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
         ...(Array.isArray(locationIds) && {
           locations: { set: locationIds.map((id) => ({ id })) },
         }),
+        // Manager-scope fields. Demoting to EMPLOYEE takes precedence and
+        // clears all three, regardless of what the client sent.
+        ...(demotingToEmployee
+          ? {
+              isStoreManager: false,
+              managedLocations: { set: [] },
+              managedDepartments: { set: [] },
+            }
+          : {
+              ...(typeof isStoreManager === 'boolean' && { isStoreManager }),
+              ...(Array.isArray(managedLocationIds) && {
+                managedLocations: { set: managedLocationIds.map((id) => ({ id })) },
+              }),
+              ...(Array.isArray(managedDepartmentIds) && {
+                managedDepartments: { set: managedDepartmentIds.map((id) => ({ id })) },
+              }),
+            }),
       },
       select: {
         id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
         employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true, isMinor: true,
+        isStoreManager: true,
         positions: { select: { id: true, name: true, color: true } },
         locations: { select: { id: true, name: true } },
+        managedLocations: { select: { id: true, name: true } },
+        managedDepartments: {
+          select: {
+            id: true,
+            name: true,
+            locationId: true,
+            location: { select: { id: true, name: true } },
+            positions: { select: { id: true, name: true } },
+          },
+        },
       },
     });
     await audit(req, 'USER_UPDATE', 'USER', user.id,

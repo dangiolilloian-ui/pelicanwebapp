@@ -245,17 +245,28 @@ router.post('/2fa/disable', authenticate, async (req, res) => {
   res.json({ enabled: false });
 });
 
-// Get current user. We include managedLocations so the client-side scope
-// check (canAct in the Team page) can hide buttons a manager would just get
-// a 403 for. The backend is still the source of truth — this is pure UI.
+// Get current user. We include the scope payload (isStoreManager,
+// managedLocations, managedDepartments) so the client can hide buttons a
+// manager would just get a 403 for. The backend remains the source of
+// truth — this is pure UI sugar.
 router.get('/me', authenticate, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
     select: {
       id: true, email: true, firstName: true, lastName: true, role: true,
       phone: true, organizationId: true,
+      isStoreManager: true,
       locations: { select: { id: true, name: true } },
       managedLocations: { select: { id: true, name: true } },
+      managedDepartments: {
+        select: {
+          id: true,
+          name: true,
+          locationId: true,
+          location: { select: { id: true, name: true } },
+          positions: { select: { id: true, name: true } },
+        },
+      },
     },
   });
   res.json(user);
