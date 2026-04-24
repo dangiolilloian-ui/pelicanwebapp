@@ -31,6 +31,8 @@ interface ShiftModalProps {
   shift?: Shift | null;
   defaultDate?: Date;
   defaultUserId?: string;
+  defaultPositionId?: string;
+  defaultLocationId?: string;
   members: User[];
   positions?: Position[];
   locations?: Location[];
@@ -39,7 +41,7 @@ interface ShiftModalProps {
   onClose: () => void;
 }
 
-export function ShiftModal({ shift, defaultDate, defaultUserId, members, positions = [], locations = [], onSave, onDelete, onClose }: ShiftModalProps) {
+export function ShiftModal({ shift, defaultDate, defaultUserId, defaultPositionId, defaultLocationId, members, positions = [], locations = [], onSave, onDelete, onClose }: ShiftModalProps) {
   const isEdit = !!shift;
   const t = useT();
 
@@ -66,8 +68,14 @@ export function ShiftModal({ shift, defaultDate, defaultUserId, members, positio
   const [startTime, setStartTime] = useState(shift ? new Date(shift.startTime).toTimeString().slice(0, 5) : '10:00');
   const [endTime, setEndTime] = useState(shift ? new Date(shift.endTime).toTimeString().slice(0, 5) : '18:00');
   const [userId, setUserId] = useState(initialUserId);
-  const [positionId, setPositionId] = useState(shift?.position?.id || initialAuto.pos);
-  const [locationId, setLocationId] = useState(shift?.location?.id || initialAuto.loc);
+  // Precedence for a new shift's position/location:
+  //   1. Existing shift value (edit mode).
+  //   2. Active schedule filter (defaultPositionId/defaultLocationId) — if
+  //      you're looking at a position-filtered view, new shifts default to
+  //      that position so they don't disappear from the view.
+  //   3. Auto-fill from the assigned employee's single assignment.
+  const [positionId, setPositionId] = useState(shift?.position?.id || defaultPositionId || initialAuto.pos);
+  const [locationId, setLocationId] = useState(shift?.location?.id || defaultLocationId || initialAuto.loc);
 
   // When the user changes the assigned employee on a new shift, auto-fill
   // position & location if they have exactly one of each.

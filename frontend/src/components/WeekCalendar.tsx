@@ -119,10 +119,15 @@ export function WeekCalendar({
     if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
     setQuickAdd(null);
 
-    // Auto-fill position/location from the employee if the template doesn't
-    // specify one and the employee has exactly one assigned.
-    let posId = tpl.position?.id ?? null;
-    let locId = tpl.location?.id ?? null;
+    // Position/location precedence for a new quick-add:
+    //   1. Active filter (wins — if you're looking at "Cashier" shifts,
+    //      adding a shift here means a Cashier shift, regardless of
+    //      what the template says).
+    //   2. Template's own position/location.
+    //   3. The assigned employee's single assignment if they only have
+    //      one matching position/location.
+    let posId = filterPosition || tpl.position?.id || null;
+    let locId = filterLocation || tpl.location?.id || null;
     if (userId) {
       const member = members.find((m) => m.id === userId);
       if (!posId && member?.positions?.length === 1) posId = member.positions[0].id;
@@ -1031,6 +1036,8 @@ export function WeekCalendar({
           shift={modal.shift}
           defaultDate={modal.date}
           defaultUserId={modal.userId}
+          defaultPositionId={filterPosition || undefined}
+          defaultLocationId={filterLocation || undefined}
           members={members}
           positions={positions}
           locations={locations}

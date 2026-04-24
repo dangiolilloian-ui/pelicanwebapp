@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { User } from '@/types';
+import type { User, Role, EmploymentType } from '@/types';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useT } from '@/lib/i18n';
@@ -35,8 +35,8 @@ interface PtoLedgerEntry {
 interface Props {
   member: User;
   onSave: (data: {
-    role?: string;
-    employmentType?: string;
+    role?: Role;
+    employmentType?: EmploymentType;
     pin?: string | null;
     weeklyHoursCap?: number | null;
     birthDate?: string | null;
@@ -51,8 +51,8 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
   const { token, user: currentUser } = useAuth();
   const t = useT();
   const isOwner = currentUser?.role === 'OWNER';
-  const [role, setRole] = useState(member.role || 'EMPLOYEE');
-  const [employmentType, setEmploymentType] = useState(member.employmentType || 'FULL_TIME');
+  const [role, setRole] = useState<Role>(member.role || 'EMPLOYEE');
+  const [employmentType, setEmploymentType] = useState<EmploymentType>(member.employmentType || 'FULL_TIME');
   const [pin, setPin] = useState(member.pin || '');
   const [cap, setCap] = useState(member.weeklyHoursCap != null ? String(member.weeklyHoursCap) : '');
   const [dob, setDob] = useState(member.birthDate ? member.birthDate.slice(0, 10) : '');
@@ -223,7 +223,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
               </label>
               <select
                 value={role}
-                onChange={(e) => setRole(e.target.value)}
+                onChange={(e) => setRole(e.target.value as typeof role)}
                 className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="EMPLOYEE">Employee</option>
@@ -242,7 +242,7 @@ export function EmployeeEditModal({ member, onSave, onClose }: Props) {
             </label>
             <select
               value={employmentType}
-              onChange={(e) => setEmploymentType(e.target.value)}
+              onChange={(e) => setEmploymentType(e.target.value as typeof employmentType)}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="FULL_TIME">Full Time</option>
