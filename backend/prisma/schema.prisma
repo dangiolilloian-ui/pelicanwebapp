@@ -26,6 +26,7 @@ model Organization {
   users     User[]
   positions Position[]
   locations Location[]
+  departments Department[]
   shifts    Shift[]
   shiftTemplates ShiftTemplate[]
   recurringShifts RecurringShift[]
@@ -50,6 +51,10 @@ model User {
   weeklyHoursCap Int?     @map("weekly_hours_cap") // null = no cap
   birthDate      DateTime? @map("birth_date") @db.Date // used for minor labor compliance
   isMinor        Boolean   @default(false) @map("is_minor") // Minor (requires meal break): 30-min break every 6h
+  // Store Manager has full authority over everyone at their assigned
+  // location(s) via managedLocations. When false, this manager is scoped to
+  // specific departments via managedDepartments instead.
+  isStoreManager Boolean  @default(false) @map("is_store_manager")
   // TOTP 2FA: secret is stored base32-encoded and is meaningless until
   // totpEnabled flips true (first successful verify). A user can be in a
   // "set up but not confirmed" state where totpSecret is non-null but
@@ -87,8 +92,8 @@ model User {
   // specific positions and/or locations. Notifications for time-off, swaps,
   // and open shifts route to these managers first. Falls back to owners if
   // no department manager is assigned.
-  managedPositions Position[]     @relation("PositionManagers")
   managedLocations Location[]     @relation("LocationManagers")
+  managedDepartments Department[] @relation("DepartmentManagers")
   conversationMemberships ConversationMember[]
   chatMessagesSent        ChatMessage[]
   attendanceEvents        AttendanceEvent[] @relation("AttendanceEventUser")
@@ -122,7 +127,7 @@ model Position {
   shifts       Shift[]
   shiftTemplates ShiftTemplate[]
   assignedUsers User[] @relation("UserPositions")
-  managers     User[] @relation("PositionManagers")
+  departments   Department[] @relation("DepartmentPositions")
 
   @@map("positions")
 }
@@ -142,6 +147,7 @@ model Location {
   shiftTemplates ShiftTemplate[]
   assignedUsers User[] @relation("UserLocations")
   managers     User[] @relation("LocationManagers")
+  departments   Department[]
 
   @@map("locations")
 }
@@ -784,4 +790,26 @@ enum AttendanceEventType {
   LATE
   NO_SHOW
   CHECKED_IN
+}
+
+model Department {
+  // A Department is a named grouping of Positions at one Location. It's the
+  // unit managers get scoped to via managedDepartments. Unique by
+  // (locationId, name) so each store can label its own departments
+  // ("Kitchen", "Front of House") without conflicting with siblings.
+  id             String   @id @default(uuid())
+  name           String
+  organizationId String   @map("organization_id")
+  locationId     String   @map("location_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location     Location     @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  positions    Position[]   @relation("DepartmentPositions")
+  managers     User[]       @relation("DepartmentManagers")
+
+  @@unique([locationId, name])
+  @@index([organizationId])
+  @@map("departments")
 }
