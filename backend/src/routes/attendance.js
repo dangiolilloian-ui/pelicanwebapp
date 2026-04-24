@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { loadScope, coversShift } = require('../lib/managerScope');
 
 const router = Router();
 
@@ -25,46 +26,29 @@ router.get('/shift/:shiftId', authenticate, async (req, res) => {
 });
 
 // Verify that a manager-tier viewer has authority to log/unlog events
-// on a shift.
-//   OWNER   — always allowed.
-//   ADMIN   — allowed org-wide if they have no managedLocations set;
-//             otherwise restricted to shifts at their managedLocations.
-//   MANAGER — restricted to shifts at their managedLocations AND in
-//             their managedPositions (their own department).
+// on a shift. Delegates to managerScope.coversShift so this rule stays in
+// sync with the roster/dashboard scope — there's exactly one answer to
+// "which shifts is this manager responsible for".
+//   OWNER            — always allowed.
+//   'all' scope      — allowed (unconfigured admin/manager: back-compat).
+//   'store' scope    — shift.locationId must be in managedLocations.
+//   'dept' scope     — shift.locationId + positionId must both belong to one
+//                      of the user's managedDepartments.
+//   anything else    — 403.
 // Returns null if allowed, or an { status, error } object to return.
 async function checkAttendanceAuthority(user, shift) {
   if (user.role === 'OWNER') return null;
   if (!['ADMIN', 'MANAGER'].includes(user.role)) {
     return { status: 403, error: 'Forbidden' };
   }
-  const me = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: {
-      managedLocations: { select: { id: true } },
-      managedPositions: { select: { id: true } },
-    },
-  });
-  const locIds = new Set((me?.managedLocations || []).map((l) => l.id));
-  const posIds = new Set((me?.managedPositions || []).map((p) => p.id));
-
-  // Admins with no explicit location scope get org-wide authority.
-  if (user.role === 'ADMIN' && locIds.size === 0) return null;
-
-  if (shift.locationId && !locIds.has(shift.locationId)) {
-    return { status: 403, error: 'Not authorized for this location' };
-  }
-  if (user.role === 'MANAGER') {
-    if (!shift.positionId || !posIds.has(shift.positionId)) {
-      return { status: 403, error: 'Not authorized for this department' };
-    }
-  }
-  return null;
+  const scope = await loadScope(user.id, user.role);
+  if (coversShift(scope, shift)) return null;
+  return { status: 403, error: 'Not authorized for this shift' };
 }
 
-// Log an attendance event on a shift (manager+).
-// Managers can only log events on shifts in their department
-// (managedLocations ∩ managedPositions). Admins need the shift's
-// location to be in their managedLocations. Owners can act on anything.
+// Log an attendance event on a shift (manager+). Authority comes from
+// checkAttendanceAuthority above, which delegates to managerScope so the
+// rule is identical to the live-roster's "what can I see" question.
 router.post('/shift/:shiftId', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const { type, notes } = req.body;
   if (!['CALLOUT', 'LATE', 'NO_SHOW', 'CHECKED_IN'].includes(type)) {

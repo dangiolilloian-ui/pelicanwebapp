@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { loadScope, coversShift, shiftScopeWhere } = require('../lib/managerScope');
 
 const router = Router();
 
@@ -165,85 +166,54 @@ router.get('/me', authenticate, async (req, res) => {
 // a `canManage` flag that tells the frontend whether to show action
 // buttons and reveal the full manager-only state detail.
 //
-// Role-based scope and detail:
+// Scope + canManage come from lib/managerScope:
 //
-//   OWNER    — sees all locations org-wide, full detail, canManage=true.
-//   ADMIN    — acts like a store-level owner. Defaults to org-wide
-//              visibility + canManage; if `managedLocations` is
-//              explicitly set, narrows to those stores only. Full
-//              detail on every row in scope.
-//   MANAGER  — sees everything at their managedLocations with full
-//              detail on every row. canManage=true only for shifts in
-//              positions they manage (their own department); rows in
-//              other departments are read-only but still show full
-//              attendance state. Must have explicit managedLocations.
-//   EMPLOYEE — sees only checked-in coworkers at their work `locations`.
-//              Anyone who isn't checked in (or who has a CALLOUT /
-//              NO_SHOW) is hidden entirely to keep the view simple and
-//              protect privacy.
+//   OWNER / 'all' scope — sees every location, canManage=true everywhere.
+//     Matches unconfigured ADMIN/MANAGER by back-compat so upgrading to
+//     the department model doesn't empty anyone's dashboard.
+//   'store' scope       — sees every shift at any managedLocation,
+//                         canManage=true on all of them.
+//   'dept' scope        — sees and can manage only shifts where
+//                         (locationId, positionId) both belong to one of
+//                         the user's managedDepartments.
+//   EMPLOYEE             — sees only checked-in coworkers at their work
+//                          `locations`; anyone who isn't checked in (or
+//                          who has a CALLOUT / NO_SHOW) is hidden to
+//                          protect privacy.
 //
 // Attendance states:
-//
 //   Manager view  → NOT_CHECKED_IN | CHECKED_IN | LATE | CALLOUT | NO_SHOW
 //   Employee view → CHECKED_IN only (no one else is listed)
 //
 // State precedence (manager view): CALLOUT/NO_SHOW > LATE > CHECKED_IN > NOT_CHECKED_IN.
-//
-// For canManage=true rows we also return `events` so the frontend knows
-// which events are active — toggle UI then POSTs to create or DELETEs
-// to remove.
 router.get('/live-roster', authenticate, async (req, res) => {
   const orgId = req.user.organizationId;
   const now = new Date();
   const role = req.user.role;
 
-  // Figure out scope + authority sets for this viewer.
-  let managedLocationIds = new Set();
-  let managedPositionIds = new Set();
-  let locationIdFilter; // undefined → no filter (OWNER)
+  // Employee viewers get scoped by their work locations (narrow-by-default).
+  // Manager-tier viewers go through managerScope which gives 'all' / 'store'
+  // / 'dept' / 'none'.
+  let shiftWhere;
+  let scope = null;
 
-  if (role !== 'OWNER') {
+  if (role === 'EMPLOYEE') {
     const me = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: {
-        managedLocations: { select: { id: true } },
-        managedPositions: { select: { id: true } },
-        locations: { select: { id: true } },
-      },
+      select: { locations: { select: { id: true } } },
     });
-    managedLocationIds = new Set((me?.managedLocations || []).map((l) => l.id));
-    managedPositionIds = new Set((me?.managedPositions || []).map((p) => p.id));
-    const workLocationIds = (me?.locations || []).map((l) => l.id);
-
-    // Decide the shift query filter.
-    //   EMPLOYEE → their work `locations`.
-    //   ADMIN    → org-wide by default; narrows to managedLocations if
-    //              those are explicitly set. Admins act like mini-owners
-    //              at their store(s) so this keeps them from hitting an
-    //              empty view before the admin UI has been configured.
-    //   MANAGER  → strictly managedLocations — managers must be
-    //              explicitly assigned a store to see anything.
-    let locIds;
-    if (role === 'EMPLOYEE') {
-      locIds = workLocationIds;
-    } else if (role === 'ADMIN') {
-      locIds = managedLocationIds.size > 0 ? [...managedLocationIds] : null;
-    } else {
-      locIds = [...managedLocationIds];
+    const workLocIds = (me?.locations || []).map((l) => l.id);
+    if (workLocIds.length === 0) {
+      return res.json({ generatedAt: now.toISOString(), viewerRole: role, locations: [] });
     }
-
-    if (locIds !== null) {
-      if (locIds.length === 0) {
-        return res.json({
-          generatedAt: now.toISOString(),
-          viewerRole: role,
-          locations: [],
-        });
-      }
-      locationIdFilter = { in: locIds };
+    shiftWhere = { locationId: { in: workLocIds } };
+  } else {
+    scope = await loadScope(req.user.id, role);
+    if (scope.kind === 'none') {
+      return res.json({ generatedAt: now.toISOString(), viewerRole: role, locations: [] });
     }
-    // locIds === null means admin-without-scope → no location filter
-    // (org-wide), matches OWNER behavior for the query below.
+    const where = shiftScopeWhere(scope);
+    if (where) shiftWhere = where;
   }
 
   // All PUBLISHED shifts in progress right now, within the viewer's scope.
@@ -254,12 +224,14 @@ router.get('/live-roster', authenticate, async (req, res) => {
       userId: { not: null },
       startTime: { lte: now },
       endTime: { gt: now },
-      ...(locationIdFilter ? { locationId: locationIdFilter } : {}),
+      ...(shiftWhere || {}),
     },
     select: {
       id: true,
       startTime: true,
       endTime: true,
+      locationId: true,
+      positionId: true,
       user: { select: { id: true, firstName: true, lastName: true } },
       location: { select: { id: true, name: true } },
       position: { select: { id: true, name: true, color: true } },
@@ -289,17 +261,11 @@ router.get('/live-roster', authenticate, async (req, res) => {
     if (!s.user) continue;
 
     // canManage: can this viewer log attendance actions on this person?
-    // Admins with no explicit managedLocations act org-wide (matches the
-    // scope fallback above); once they've been narrowed to specific
-    // stores, they can only manage at those stores.
+    // One shared rule — managerScope.coversShift — drives both visibility
+    // and action authority so the two can never drift apart.
     let canManage = false;
     if (role === 'OWNER') canManage = true;
-    else if (role === 'ADMIN') {
-      canManage = managedLocationIds.size === 0 || managedLocationIds.has(s.location?.id);
-    } else if (role === 'MANAGER') {
-      canManage =
-        managedLocationIds.has(s.location?.id) && managedPositionIds.has(s.position?.id);
-    }
+    else if (role !== 'EMPLOYEE' && scope) canManage = coversShift(scope, s);
 
     const evMap = eventsByShift.get(s.id) || new Map();
     const hasCallout = evMap.has('CALLOUT');
