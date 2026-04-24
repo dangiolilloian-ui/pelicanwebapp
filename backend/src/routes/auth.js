@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { Router } = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -6,6 +7,7 @@ const QRCode = require('qrcode');
 const prisma = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { rateLimit } = require('../middleware/rateLimit');
+const { sendEmail, esc } = require('../lib/email');
 
 // Helper — verify a 6-digit TOTP code against a base32 secret.  window:1
 // means we accept the previous and next 30s window too, which covers the
@@ -42,6 +44,16 @@ const resetLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   keyPrefix: 'reset',
+});
+
+// Forgot-password is unauthenticated and costs an email send, so tighter:
+// 5 requests per 15 minutes per IP. Also keyed by IP alone — we don't want
+// to rate-limit by email (that would let an attacker rotate emails to
+// probe which ones exist).
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyPrefix: 'forgot',
 });
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -236,10 +248,67 @@ router.get('/me', authenticate, async (req, res) => {
 
 
 // --- Password reset / invite flow ---
-// Tokens are minted elsewhere (by managers via /api/users/:id/reset-link or
-// automatically on user creation). These two endpoints are public:
+//   POST /auth/forgot-password       — request a reset link by email
 //   GET  /auth/password-reset/:token — validate + return who it's for
 //   POST /auth/password-reset        — consume + set new password
+
+// POST /auth/forgot-password
+// Accepts { email }. If a matching user exists, mint a PasswordResetToken
+// and email a link. ALWAYS returns 200 regardless of whether the email
+// exists — otherwise the endpoint leaks which addresses are registered.
+router.post('/forgot-password', forgotLimiter, async (req, res) => {
+  const rawEmail = (req.body?.email || '').trim().toLowerCase();
+  if (!rawEmail) return res.status(400).json({ error: 'Email required' });
+
+  // Intentionally opaque success response — same shape whether or not the
+  // email is a real account. Do NOT tell callers "no user found".
+  const genericOk = { ok: true };
+
+  const user = await prisma.user.findUnique({
+    where: { email: rawEmail },
+    select: { id: true, email: true, firstName: true },
+  });
+  if (!user) return res.json(genericOk);
+
+  // One reset token active at a time per user — invalidate prior unused
+  // tokens so an attacker who got an old link can't use it after the user
+  // requests a new one.
+  await prisma.passwordResetToken.updateMany({
+    where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date() },
+  });
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+  await prisma.passwordResetToken.create({
+    data: { userId: user.id, token, expiresAt },
+  });
+
+  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const resetUrl = `${appUrl}/reset/${token}`;
+
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#111">
+      <h2 style="margin:0 0 16px">Reset your Pelican password</h2>
+      <p>Hi ${esc(user.firstName) || 'there'},</p>
+      <p>We got a request to reset the password for <strong>${esc(user.email)}</strong>. Click the button below to set a new one. This link is good for 24 hours.</p>
+      <p style="margin:24px 0">
+        <a href="${resetUrl}" style="background:#4f46e5;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:600">Reset password</a>
+      </p>
+      <p style="font-size:13px;color:#555">Or copy and paste this URL into your browser:<br><a href="${resetUrl}">${resetUrl}</a></p>
+      <p style="font-size:13px;color:#555">If you didn't request this, you can safely ignore this email — your current password will stay active.</p>
+    </div>
+  `;
+  const text = `Reset your Pelican password\n\nHi ${user.firstName || 'there'},\n\nWe got a request to reset the password for ${user.email}. Open this link within 24 hours to set a new one:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`;
+
+  // Fire and forget as far as the API response goes — we don't want the
+  // delivery status to leak whether the email existed either.
+  sendEmail({ to: user.email, subject: 'Reset your Pelican password', html, text }).catch((e) => {
+    console.error('[forgot-password] send failed', e);
+  });
+
+  res.json(genericOk);
+});
 
 router.get('/password-reset/:token', async (req, res) => {
   const record = await prisma.passwordResetToken.findUnique({
