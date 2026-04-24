@@ -31,7 +31,14 @@ export default function LoginPage() {
         router.push('/dashboard');
       }
     } catch (err: any) {
-      setError(err.message || 'Login failed');
+      // Friendly override for the deactivated-account case — the raw backend
+      // string is fine, but the translated copy is clearer and doesn't look
+      // like a typo/network error.
+      if (err.code === 'DEACTIVATED') {
+        setError(t('auth.accountDeactivated'));
+      } else {
+        setError(err.message || 'Login failed');
+      }
     } finally {
       setLoading(false);
     }

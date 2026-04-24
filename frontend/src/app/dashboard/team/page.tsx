@@ -11,7 +11,19 @@ import type { User } from '@/types';
 import clsx from 'clsx';
 
 export default function TeamPage() {
-  const { members, loading, addMember, removeMember, updateMember, generateResetLink } = useTeam();
+  const {
+    members,
+    inactiveMembers,
+    inactiveLoaded,
+    loading,
+    addMember,
+    removeMember,
+    updateMember,
+    generateResetLink,
+    deactivateMember,
+    activateMember,
+    fetchInactive,
+  } = useTeam();
   const { user } = useAuth();
   const isManager = user?.role === 'OWNER' || user?.role === 'ADMIN' || user?.role === 'MANAGER';
   const [showForm, setShowForm] = useState(false);
@@ -20,11 +32,23 @@ export default function TeamPage() {
   const [availabilityFor, setAvailabilityFor] = useState<User | null>(null);
   const [editingMember, setEditingMember] = useState<User | null>(null);
   const [search, setSearch] = useState('');
+  // Which roster we're looking at. Active is the default; Deactivated lazy-
+  // loads on first click.
+  const [tab, setTab] = useState<'active' | 'inactive'>('active');
+  // Confirm-before-destructive dialog. Holds the user we're about to act on
+  // plus which action (deactivate | remove) so the same modal serves both.
+  const [confirm, setConfirm] = useState<{ member: User; action: 'deactivate' | 'remove' } | null>(null);
   const t = useT();
+
+  useEffect(() => {
+    if (tab === 'inactive' && !inactiveLoaded) {
+      fetchInactive();
+    }
+  }, [tab, inactiveLoaded, fetchInactive]);
   // Holds a freshly-minted invite/reset link plus which employee it's for,
   // so the manager can copy it once and dismiss. We intentionally never
   // persist this client-side — closing the modal forgets it.
-  const [linkModal, setLinkModal] = useState<{ name: string; url: string; kind: 'invite' | 'reset' } | null>(null);
+  const [linkModal, setLinkModal] = useState<{ name: string; url: string; kind: 'invite' | 'reset'; emailedTo?: string | null } | null>(null);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
 
@@ -73,15 +97,59 @@ export default function TeamPage() {
 
   const handleResetLink = async (m: User) => {
     try {
-      const token = await generateResetLink(m.id);
-      if (!token) return;
+      const result = await generateResetLink(m.id);
+      if (!result) return;
       setLinkModal({
         name: `${m.firstName} ${m.lastName}`,
-        url: `${window.location.origin}/reset/${token}`,
+        url: `${window.location.origin}/reset/${result.token}`,
         kind: 'reset',
+        emailedTo: result.emailed ? result.sentTo : null,
       });
     } catch (err) {
       console.error('Failed to generate reset link', err);
+    }
+  };
+
+  // Client-side predicate for whether `user` can act on `target`. Matches the
+  // backend's canManageTarget. We show/hide buttons based on this so a manager
+  // doesn't see a Deactivate button they'd just get a 403 for — but the
+  // backend still enforces it on the actual call as the source of truth.
+  const canAct = (target: User): boolean => {
+    if (!user || target.id === user.id) return false;
+    if (user.role === 'OWNER') return true;
+    if (user.role === 'ADMIN') return target.role !== 'OWNER';
+    if (user.role === 'MANAGER') {
+      if (target.role !== 'EMPLOYEE') return false;
+      // Scope by the manager's assigned departments (managedLocations), which
+      // matches the backend's canManageTarget. An unassigned manager can't act
+      // on anyone.
+      const myManaged = new Set((user.managedLocations || []).map((l) => l.id));
+      if (myManaged.size === 0) return false;
+      return (target.locations || []).some((l) => myManaged.has(l.id));
+    }
+    return false;
+  };
+
+  const runConfirm = async () => {
+    if (!confirm) return;
+    try {
+      if (confirm.action === 'deactivate') {
+        await deactivateMember(confirm.member.id);
+      } else {
+        await removeMember(confirm.member.id);
+      }
+      setConfirm(null);
+    } catch (err: any) {
+      setConfirm(null);
+      setError(err.message || 'Action failed');
+    }
+  };
+
+  const handleActivate = async (m: User) => {
+    try {
+      await activateMember(m.id);
+    } catch (err: any) {
+      setError(err.message || 'Activate failed');
     }
   };
 
@@ -200,6 +268,43 @@ export default function TeamPage() {
         </div>
       )}
 
+      {/* Active / Deactivated tabs. Managers rarely look at the deactivated
+          list, so we keep Active as the default and lazy-load inactive. */}
+      <div className="flex items-center gap-1 mb-4 border-b border-gray-200 dark:border-gray-800">
+        <button
+          onClick={() => setTab('active')}
+          className={clsx(
+            'px-3 py-2 text-sm font-medium border-b-2 -mb-px transition',
+            tab === 'active'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-gray-100'
+          )}
+        >
+          {t('team.tabActive')} <span className="text-xs text-gray-400">({members.length})</span>
+        </button>
+        <button
+          onClick={() => setTab('inactive')}
+          className={clsx(
+            'px-3 py-2 text-sm font-medium border-b-2 -mb-px transition',
+            tab === 'inactive'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-gray-100'
+          )}
+        >
+          {t('team.tabInactive')}{' '}
+          {inactiveLoaded && <span className="text-xs text-gray-400">({inactiveMembers.length})</span>}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2 text-sm text-red-700 dark:text-red-300 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="text-xs text-red-600 hover:text-red-800">
+            {t('common.dismiss') || 'Dismiss'}
+          </button>
+        </div>
+      )}
+
       <input
         type="text"
         value={search}
@@ -208,112 +313,175 @@ export default function TeamPage() {
         className="w-full mb-4 rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
 
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-        </div>
-      ) : (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
-          <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-            {(() => {
-              const filtered = members.filter((m) => {
-                const q = search.toLowerCase();
-                return !q || `${m.firstName} ${m.lastName}`.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
-              });
-              const ft = filtered.filter((m) => m.employmentType !== 'PART_TIME').length;
-              const pt = filtered.filter((m) => m.employmentType === 'PART_TIME').length;
-              return `${filtered.length} members — ${ft} full time — ${pt} part time`;
-            })()}
-          </div>
-          {members
-            .filter((m) => {
-              const q = search.toLowerCase();
-              return !q || `${m.firstName} ${m.lastName}`.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
-            })
-            .map((m) => (
-            <div key={m.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center text-sm font-medium text-indigo-700">
-                  {m.firstName[0]}{m.lastName[0]}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{m.firstName} {m.lastName}</p>
-                  <div className="flex items-center gap-1 flex-wrap">
-                    <span className="text-xs text-gray-500 dark:text-gray-400">{m.email}</span>
-                    {m.positions && m.positions.length > 0 && m.positions.map((p) => (
-                      <span key={p.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: p.color }} />
-                        {p.name}
+      {(() => {
+        const sourceList = tab === 'active' ? members : inactiveMembers;
+        const q = search.toLowerCase();
+        const filtered = sourceList.filter((m) => {
+          return !q || `${m.firstName} ${m.lastName}`.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
+        });
+        const showSpinner = loading && tab === 'active';
+        const showEmpty =
+          !showSpinner &&
+          filtered.length === 0 &&
+          (tab === 'active' || inactiveLoaded);
+
+        if (showSpinner) {
+          return (
+            <div className="flex justify-center py-12">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+            </div>
+          );
+        }
+
+        return (
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
+            <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+              {tab === 'active'
+                ? (() => {
+                    const ft = filtered.filter((m) => m.employmentType !== 'PART_TIME').length;
+                    const pt = filtered.filter((m) => m.employmentType === 'PART_TIME').length;
+                    return `${filtered.length} members — ${ft} full time — ${pt} part time`;
+                  })()
+                : `${filtered.length} ${t('team.tabInactive').toLowerCase()}`}
+            </div>
+
+            {showEmpty && (
+              <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                {tab === 'inactive' ? t('team.noDeactivated') : t('team.noResults') || 'No matches'}
+              </div>
+            )}
+
+            {filtered.map((m) => {
+              const inactive = tab === 'inactive';
+              return (
+                <div
+                  key={m.id}
+                  className={clsx(
+                    'flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50',
+                    inactive && 'opacity-70'
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={clsx(
+                      'h-9 w-9 rounded-full flex items-center justify-center text-sm font-medium',
+                      inactive
+                        ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
+                        : 'bg-indigo-100 text-indigo-700'
+                    )}>
+                      {m.firstName[0]}{m.lastName[0]}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{m.firstName} {m.lastName}</p>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">{m.email}</span>
+                        {m.positions && m.positions.length > 0 && m.positions.map((p) => (
+                          <span key={p.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: p.color }} />
+                            {p.name}
+                          </span>
+                        ))}
+                        {m.locations && m.locations.length > 0 && m.locations.map((l) => (
+                          <span key={l.id} className="rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">
+                            {l.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {m.pin && !inactive && (
+                      <span className="text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded px-1.5 py-0.5" title={t('team.kioskPinSet')}>
+                        PIN
                       </span>
-                    ))}
-                    {m.locations && m.locations.length > 0 && m.locations.map((l) => (
-                      <span key={l.id} className="rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">
-                        {l.name}
+                    )}
+                    {m.isMinor && !inactive && (
+                      <span className="text-[10px] bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 rounded-full px-2 py-0.5 font-medium">
+                        Minor
                       </span>
-                    ))}
+                    )}
+                    {m.weeklyHoursCap != null && !inactive && (
+                      <span className="text-[10px] text-gray-500 dark:text-gray-400" title={t('team.weeklyHoursCap')}>
+                        {t('team.hoursCap', { n: m.weeklyHoursCap })}
+                      </span>
+                    )}
+                    {inactive && (
+                      <span className="text-[10px] bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full px-2 py-0.5 font-medium">
+                        {t('team.inactiveBadge')}
+                      </span>
+                    )}
+                    {roleBadge(m.role)}
+                    {!inactive && (
+                      <span className={clsx('rounded-full px-2 py-0.5 text-xs font-medium',
+                        m.employmentType === 'PART_TIME'
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                          : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                      )}>
+                        {m.employmentType === 'PART_TIME' ? 'PT' : 'FT'}
+                      </span>
+                    )}
+
+                    {!inactive && (
+                      <button
+                        onClick={() => setAvailabilityFor(m)}
+                        className="text-xs text-indigo-600 hover:text-indigo-800"
+                      >
+                        {t('team.availability')}
+                      </button>
+                    )}
+
+                    {isManager && (
+                      <button
+                        onClick={() => setEditingMember(m)}
+                        className="text-xs text-gray-600 dark:text-gray-400 hover:text-indigo-600"
+                      >
+                        {t('common.edit')}
+                      </button>
+                    )}
+
+                    {!inactive && isManager && m.id !== user?.id && (
+                      <button
+                        onClick={() => handleResetLink(m)}
+                        className="text-xs text-gray-600 dark:text-gray-400 hover:text-indigo-600"
+                        title={t('team.generateResetLink')}
+                      >
+                        {t('team.resetLink')}
+                      </button>
+                    )}
+
+                    {!inactive && canAct(m) && (
+                      <button
+                        onClick={() => setConfirm({ member: m, action: 'deactivate' })}
+                        className="text-xs text-amber-600 hover:text-amber-800"
+                        title={t('team.deactivateHint')}
+                      >
+                        {t('team.deactivate')}
+                      </button>
+                    )}
+
+                    {inactive && canAct(m) && (
+                      <button
+                        onClick={() => handleActivate(m)}
+                        className="text-xs text-green-600 hover:text-green-800"
+                      >
+                        {t('team.activate')}
+                      </button>
+                    )}
+
+                    {canAct(m) && (
+                      <button
+                        onClick={() => setConfirm({ member: m, action: 'remove' })}
+                        className="text-xs text-red-500 hover:text-red-700"
+                      >
+                        {t('team.deleteUser')}
+                      </button>
+                    )}
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {m.pin && (
-                  <span className="text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded px-1.5 py-0.5" title={t('team.kioskPinSet')}>
-                    PIN
-                  </span>
-                )}
-                {m.isMinor && (
-                  <span className="text-[10px] bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 rounded-full px-2 py-0.5 font-medium">
-                    Minor
-                  </span>
-                )}
-                {m.weeklyHoursCap != null && (
-                  <span className="text-[10px] text-gray-500 dark:text-gray-400" title={t('team.weeklyHoursCap')}>
-                    {t('team.hoursCap', { n: m.weeklyHoursCap })}
-                  </span>
-                )}
-                {roleBadge(m.role)}
-                <span className={clsx('rounded-full px-2 py-0.5 text-xs font-medium',
-                  m.employmentType === 'PART_TIME'
-                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                    : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                )}>
-                  {m.employmentType === 'PART_TIME' ? 'PT' : 'FT'}
-                </span>
-                <button
-                  onClick={() => setAvailabilityFor(m)}
-                  className="text-xs text-indigo-600 hover:text-indigo-800"
-                >
-                  {t('team.availability')}
-                </button>
-                {isManager && (
-                  <button
-                    onClick={() => setEditingMember(m)}
-                    className="text-xs text-gray-600 dark:text-gray-400 hover:text-indigo-600"
-                  >
-                    {t('common.edit')}
-                  </button>
-                )}
-                {isManager && m.id !== user?.id && (
-                  <button
-                    onClick={() => handleResetLink(m)}
-                    className="text-xs text-gray-600 dark:text-gray-400 hover:text-indigo-600"
-                    title={t('team.generateResetLink')}
-                  >
-                    {t('team.resetLink')}
-                  </button>
-                )}
-                {isManager && user?.role === 'OWNER' && m.id !== user.id && (
-                  <button
-                    onClick={() => removeMember(m.id)}
-                    className="text-xs text-red-500 hover:text-red-700"
-                  >
-                    {t('common.remove')}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {availabilityFor && (
         <AvailabilityModal member={availabilityFor} onClose={() => setAvailabilityFor(null)} />
@@ -325,6 +493,46 @@ export default function TeamPage() {
           onSave={async (data) => { await updateMember(editingMember.id, data); }}
           onClose={() => setEditingMember(null)}
         />
+      )}
+
+      {confirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setConfirm(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white dark:bg-gray-900 p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+              {confirm.action === 'deactivate' ? t('team.deactivateTitle') : t('team.removeTitle')}
+            </h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              {confirm.action === 'deactivate'
+                ? t('team.deactivateBody', { name: `${confirm.member.firstName} ${confirm.member.lastName}` })
+                : t('team.removeBody', { name: `${confirm.member.firstName} ${confirm.member.lastName}` })}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirm(null)}
+                className="rounded-lg border border-gray-300 dark:border-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={runConfirm}
+                className={clsx(
+                  'rounded-lg px-4 py-2 text-sm font-medium text-white transition',
+                  confirm.action === 'deactivate'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-red-600 hover:bg-red-700'
+                )}
+              >
+                {confirm.action === 'deactivate' ? t('team.deactivate') : t('team.deleteUser')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {linkModal && (
@@ -342,6 +550,17 @@ export default function TeamPage() {
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
               {t('team.linkDesc', { name: linkModal.name })}
             </p>
+            {linkModal.emailedTo && (
+              <div className="mb-4 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 px-3 py-2">
+                <p className="text-xs text-green-800 dark:text-green-300">
+                  <span className="font-medium">{t('team.emailSent')}</span>{' '}
+                  <span className="font-mono">{linkModal.emailedTo}</span>
+                </p>
+                <p className="text-[11px] text-green-700 dark:text-green-400 mt-0.5">
+                  {t('team.emailSentHint')}
+                </p>
+              </div>
+            )}
             <div className="flex items-center gap-2 mb-4">
               <input
                 type="text" readOnly value={linkModal.url}

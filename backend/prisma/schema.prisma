@@ -58,6 +58,10 @@ model User {
   totpSecret     String?  @map("totp_secret")
   totpEnabled    Boolean  @default(false) @map("totp_enabled")
   icalToken      String?  @unique @map("ical_token")
+  // Soft delete — deactivated users can't log in and are hidden from
+  // scheduling/rosters but all their historical records stay intact so a
+  // rehire is a one-click reactivation, not a data-recovery exercise.
+  isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -91,6 +95,7 @@ model User {
   attendanceEventsCreated AttendanceEvent[] @relation("AttendanceEventCreator")
 
   @@unique([organizationId, pin])
+  @@index([organizationId, isActive])
   @@map("users")
 }
 

@@ -20,7 +20,16 @@ export async function api<T>(path: string, opts: FetchOptions = {}): Promise<T> 
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed: ${res.status}`);
+    // Preserve the backend's error code + HTTP status on the thrown Error so
+    // call sites can branch on them (e.g. showing a special "account
+    // deactivated" screen instead of a generic "invalid credentials" toast).
+    const err = new Error(body.error || `Request failed: ${res.status}`) as Error & {
+      code?: string;
+      status?: number;
+    };
+    err.code = body.code;
+    err.status = res.status;
+    throw err;
   }
 
   if (res.status === 204) return undefined as T;

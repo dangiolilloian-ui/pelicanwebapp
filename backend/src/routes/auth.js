@@ -124,6 +124,14 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Block deactivated accounts before we hand out a token. We check this
+    // AFTER verifying the password so a wrong guess on a deactivated email
+    // still just looks like "invalid credentials" — avoids leaking whether
+    // the account exists and is merely disabled.
+    if (user.isActive === false) {
+      return res.status(403).json({ error: 'Account deactivated', code: 'DEACTIVATED' });
+    }
+
     if (user.totpEnabled) {
       if (!totp) {
         // Password was correct but we need the second factor. 200 +
@@ -237,11 +245,18 @@ router.post('/2fa/disable', authenticate, async (req, res) => {
   res.json({ enabled: false });
 });
 
-// Get current user
+// Get current user. We include managedLocations so the client-side scope
+// check (canAct in the Team page) can hide buttons a manager would just get
+// a 403 for. The backend is still the source of truth — this is pure UI.
 router.get('/me', authenticate, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
-    select: { id: true, email: true, firstName: true, lastName: true, role: true, phone: true, organizationId: true },
+    select: {
+      id: true, email: true, firstName: true, lastName: true, role: true,
+      phone: true, organizationId: true,
+      locations: { select: { id: true, name: true } },
+      managedLocations: { select: { id: true, name: true } },
+    },
   });
   res.json(user);
 });
@@ -266,9 +281,12 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { email: rawEmail },
-    select: { id: true, email: true, firstName: true },
+    select: { id: true, email: true, firstName: true, isActive: true },
   });
-  if (!user) return res.json(genericOk);
+  // Deactivated accounts silently drop off the forgot-password flow — we
+  // still return the generic "check your inbox" response so the endpoint
+  // can't be used to discover which accounts are disabled.
+  if (!user || user.isActive === false) return res.json(genericOk);
 
   // One reset token active at a time per user — invalidate prior unused
   // tokens so an attacker who got an old link can't use it after the user
@@ -332,6 +350,17 @@ router.post('/password-reset', resetLimiter, async (req, res) => {
 
   const record = await prisma.passwordResetToken.findUnique({ where: { token } });
   if (!record || record.usedAt || record.expiresAt < new Date()) {
+    return res.status(410).json({ error: 'Link expired or already used' });
+  }
+
+  // Deactivated accounts can't consume a reset — pretend the link is stale
+  // rather than revealing the account's disabled status. Same pattern as the
+  // forgot-password endpoint.
+  const targetUser = await prisma.user.findUnique({
+    where: { id: record.userId },
+    select: { isActive: true },
+  });
+  if (!targetUser || targetUser.isActive === false) {
     return res.status(410).json({ error: 'Link expired or already used' });
   }
 

@@ -15,8 +15,12 @@ export interface User {
   icalToken?: string | null;
   birthDate?: string | null;
   isMinor?: boolean;
+  isActive?: boolean;
   positions?: Pick<Position, 'id' | 'name' | 'color'>[];
   locations?: Pick<Location, 'id' | 'name'>[];
+  // Only populated on the /auth/me payload for the logged-in user — used by
+  // the Team page to decide which rows a MANAGER can act on.
+  managedLocations?: Pick<Location, 'id' | 'name'>[];
 }
 
 export interface Shift {

@@ -2,8 +2,10 @@ const { Router } = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const prisma = require('../config/db');
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate, requireRole, invalidateActiveCache } = require('../middleware/auth');
 const { audit } = require('../lib/audit');
+const { sendEmail, esc } = require('../lib/email');
+const { canManageTarget } = require('../lib/userScope');
 
 const router = Router();
 
@@ -13,12 +15,24 @@ function randomToken() {
 
 // List org members. Positions/locations are the employee's trained roles and
 // home stores — used by the scheduling page to filter the roster.
+//
+// `?status=` query param:
+//   active   (default) — only isActive=true users
+//   inactive — only deactivated users (for the Team page "Deactivated" tab)
+//   all      — both (rare — full audit/reporting views)
 router.get('/', authenticate, async (req, res) => {
+  const statusParam = (req.query.status || 'active').toString();
+  let activeFilter;
+  if (statusParam === 'inactive') activeFilter = { isActive: false };
+  else if (statusParam === 'all') activeFilter = {};
+  else activeFilter = { isActive: true };
+
   const users = await prisma.user.findMany({
-    where: { organizationId: req.user.organizationId },
+    where: { organizationId: req.user.organizationId, ...activeFilter },
     select: {
       id: true, email: true, firstName: true, lastName: true, phone: true, role: true,
       employmentType: true, weeklyHoursCap: true, pin: true, birthDate: true, isMinor: true,
+      isActive: true,
       positions: { select: { id: true, name: true, color: true } },
       locations: { select: { id: true, name: true } },
     },
@@ -127,12 +141,14 @@ router.post('/', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (
 });
 
 // Manager-triggered password reset. Generates a fresh single-use token for
-// the target employee and returns it so the manager can send the link via
-// whatever channel they use (SMS, in person, etc). Does NOT notify anyone.
+// the target employee AND emails them the link directly. The raw token is
+// also returned to the manager so the Team page can show the URL as a
+// fallback (useful if the email doesn't arrive or they want to send it via
+// another channel too).
 router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
   const target = await prisma.user.findUnique({
     where: { id: req.params.id },
-    select: { id: true, organizationId: true },
+    select: { id: true, email: true, firstName: true, organizationId: true },
   });
   if (!target || target.organizationId !== req.user.organizationId) {
     return res.status(404).json({ error: 'User not found' });
@@ -145,7 +161,36 @@ router.post('/:id/reset-link', authenticate, requireRole('OWNER', 'ADMIN', 'MANA
       expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
     },
   });
-  res.status(201).json({ token });
+
+  const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const resetUrl = `${appUrl}/reset/${token}`;
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#111">
+      <h2 style="margin:0 0 16px">Set your Pelican password</h2>
+      <p>Hi ${esc(target.firstName) || 'there'},</p>
+      <p>A manager at your workplace sent you a link to set or reset your Pelican password. Click the button below to pick a new password. This link is good for 7 days.</p>
+      <p style="margin:24px 0">
+        <a href="${resetUrl}" style="background:#4f46e5;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:600">Set password</a>
+      </p>
+      <p style="font-size:13px;color:#555">Or copy and paste this URL into your browser:<br><a href="${resetUrl}">${resetUrl}</a></p>
+      <p style="font-size:13px;color:#555">If you didn't expect this, you can safely ignore this email.</p>
+    </div>
+  `;
+  const text = `Set your Pelican password\n\nHi ${target.firstName || 'there'},\n\nA manager sent you a link to set or reset your Pelican password. Open this link within 7 days to pick a new password:\n\n${resetUrl}\n\nIf you didn't expect this, you can safely ignore this email.`;
+
+  // Fire and forget — don't make the manager wait on the SMTP roundtrip,
+  // and don't fail the button click if delivery has a transient hiccup.
+  // The returned token gives the manager a fallback anyway.
+  let emailed = false;
+  const sendResult = await sendEmail({
+    to: target.email,
+    subject: 'Set your Pelican password',
+    html,
+    text,
+  });
+  emailed = sendResult.ok && !sendResult.dev;
+
+  res.status(201).json({ token, emailed, sentTo: target.email });
 });
 
 // Update user
@@ -288,15 +333,89 @@ router.put('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async
 });
 
 // Delete user
-router.delete('/:id', authenticate, requireRole('OWNER'), async (req, res) => {
-  const before = await prisma.user.findUnique({ where: { id: req.params.id }, select: { firstName: true, lastName: true, email: true, role: true } });
-  await prisma.user.delete({ where: { id: req.params.id } });
-  if (before) {
-    await audit(req, 'USER_DELETE', 'USER', req.params.id,
-      `Deleted user ${before.firstName} ${before.lastName}`,
-      { email: before.email, role: before.role });
+//
+// Scope is enforced by canManageTarget: OWNER can remove anyone, ADMIN anyone
+// non-OWNER, MANAGER only EMPLOYEEs in their managed locations. Previously this
+// was OWNER-only, but the team page needs managers/admins to be able to clean
+// up their own rosters without bouncing every request up to the owner.
+router.delete('/:id', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
+  const scope = await canManageTarget(req.user, req.params.id);
+  if (!scope.ok) return res.status(scope.status).json({ error: scope.error });
+  const target = scope.target;
+
+  try {
+    await prisma.user.delete({ where: { id: req.params.id } });
+  } catch (err) {
+    // A hard delete will fail if the user has shifts, time entries, etc. that
+    // lack ON DELETE CASCADE. Point the caller at deactivate instead — it's
+    // almost always what they actually want anyway.
+    if (err.code === 'P2003' || err.code === 'P2014') {
+      return res.status(409).json({
+        error: 'This user has historical records (shifts, time entries, etc.) and can\'t be hard-deleted. Deactivate them instead.',
+        code: 'HAS_REFERENCES',
+      });
+    }
+    throw err;
   }
+
+  await audit(req, 'USER_DELETE', 'USER', req.params.id,
+    `Deleted user ${target.firstName} ${target.lastName}`,
+    { email: target.email, role: target.role });
+  invalidateActiveCache(req.params.id);
   res.status(204).end();
+});
+
+// Deactivate a user (soft-delete). They keep their record — shifts, time
+// entries, audit history all stay — but they can't log in and they're hidden
+// from scheduling/rosters. Reverse with POST /:id/activate.
+router.post('/:id/deactivate', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
+  const scope = await canManageTarget(req.user, req.params.id);
+  if (!scope.ok) return res.status(scope.status).json({ error: scope.error });
+  const target = scope.target;
+
+  if (target.isActive === false) {
+    return res.status(400).json({ error: 'User is already deactivated' });
+  }
+
+  await prisma.user.update({
+    where: { id: req.params.id },
+    data: { isActive: false },
+  });
+
+  await audit(req, 'USER_DEACTIVATE', 'USER', req.params.id,
+    `Deactivated ${target.firstName} ${target.lastName}`,
+    { email: target.email, role: target.role });
+
+  // Drop the cached "is active" flag so any live session this user has stops
+  // working on the very next request instead of having to wait out the TTL.
+  invalidateActiveCache(req.params.id);
+
+  res.json({ ok: true, id: req.params.id, isActive: false });
+});
+
+// Reactivate a previously-deactivated user. Brings them back into schedule
+// visibility and lets them log in again. Same scope rules as deactivate.
+router.post('/:id/activate', authenticate, requireRole('OWNER', 'ADMIN', 'MANAGER'), async (req, res) => {
+  const scope = await canManageTarget(req.user, req.params.id);
+  if (!scope.ok) return res.status(scope.status).json({ error: scope.error });
+  const target = scope.target;
+
+  if (target.isActive === true) {
+    return res.status(400).json({ error: 'User is already active' });
+  }
+
+  await prisma.user.update({
+    where: { id: req.params.id },
+    data: { isActive: true },
+  });
+
+  await audit(req, 'USER_ACTIVATE', 'USER', req.params.id,
+    `Reactivated ${target.firstName} ${target.lastName}`,
+    { email: target.email, role: target.role });
+
+  invalidateActiveCache(req.params.id);
+
+  res.json({ ok: true, id: req.params.id, isActive: true });
 });
 
 module.exports = router;
