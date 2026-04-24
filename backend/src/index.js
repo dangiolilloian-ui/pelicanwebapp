@@ -37,6 +37,7 @@ const onboardingRoutes = require('./routes/onboarding');
 const incidentRoutes = require('./routes/incidents');
 const conversationRoutes = require('./routes/conversations');
 const attendanceRoutes = require('./routes/attendance');
+const departmentRoutes = require('./routes/departments');
 
 const { startShiftRemindersJob } = require('./jobs/shiftReminders');
 const { startUnconfirmedNudgeJob } = require('./jobs/unconfirmedNudge');
@@ -106,6 +107,7 @@ app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/incidents', incidentRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/departments', departmentRoutes);
 // iCal feed lives outside /api so calendar apps get a clean URL
 app.use('/ical', icalRoutes);
 
